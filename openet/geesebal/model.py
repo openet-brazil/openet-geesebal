@@ -9,10 +9,12 @@ DEG2RAD = math.pi / 180.0
 
 
 def et(image, ndvi, ndwi, lst, albedo, emissivity, savi,
-       meteo_inst_source, meteo_daily_source, elev_product,
+       meteo_location,
+       #meteo_inst_source, meteo_daily_source,
+       elev_product,
        ndvi_cold, ndvi_hot, lst_cold, lst_hot,
        time_start, geometry_image, proj, coords,
-       calibration_points=10, max_iterations=15,
+       calibration_points=50, max_iterations=15,
        ):
     """
     Daily Evapotranspiration [mm day-1].
@@ -89,7 +91,7 @@ def et(image, ndvi, ndwi, lst, albedo, emissivity, savi,
 
     # Meteorology parameters
     tmin, tmax, tair, ux, rh, rso_inst, rso24h = meteorology(
-        time_start, meteo_inst_source, meteo_daily_source,
+        time_start, meteo_location ='br' #meteo_inst_source, meteo_daily_source,
     )
 
     # Elevation data
@@ -105,7 +107,7 @@ def et(image, ndvi, ndwi, lst, albedo, emissivity, savi,
     # LL: iterative process or endmembers selections may return empty values
     # in this case, return an empty image instead of broken the code
     try:
-        # Air temperature correction
+            # Air temperature correction
         tair_dem = tair_dem_correction(tmin, tmax, elev)
 
         # Land surface temperature correction
@@ -136,8 +138,9 @@ def et(image, ndvi, ndwi, lst, albedo, emissivity, savi,
             p_lowest_NDVI, p_hottest_Ts, geometry_image, coords, proj, elev,
             calibration_points,
         )
-        # print(fc_cold_pixels.getInfo())
-        # print(fc_hot_pixels.getInfo())
+        
+        #print(fc_cold_pixels.getInfo())
+        #print(fc_hot_pixels.getInfo())
 
         # Instantaneous sensible heat flux (h)
         # BCCA - added conditional in case no endmembers are found
@@ -152,7 +155,7 @@ def et(image, ndvi, ndwi, lst, albedo, emissivity, savi,
             )
         )
 
-        # h_inst = sensible_heat_flux(
+        #h_inst = sensible_heat_flux(
         #     savi, ux, fc_cold_pixels, fc_hot_pixels, lst_dem, lst, elev, geometry_image,
         #     max_iterations,
         # )
@@ -163,7 +166,7 @@ def et(image, ndvi, ndwi, lst, albedo, emissivity, savi,
     except Exception as e:
         # CGM - We should probably log the exception so the user knows,
         #   but this will cause problems when mapping over a collection
-        print(f'Unhandled Exception: {e}')
+        #print(f'Unhandled Exception: {e}')
 
         # Return a masked image
         et_24hr = ee.Image.constant(0).updateMask(0).rename('et')
@@ -171,16 +174,14 @@ def et(image, ndvi, ndwi, lst, albedo, emissivity, savi,
     return et_24hr
 
 
-def meteorology(time_start, meteo_inst_source, meteo_daily_source):
+def meteorology(time_start, meteo_location ='br'):
     """
     Parameters
     ----------
     time_start : str
         Image property: time start of the image.
-    meteo_inst_source: ee.ImageCollection, str
-        Instantaneous meteorological data.
-    meteo_daily_source :  ee.ImageCollection, str
-        Daily meteorological data.
+    meteo_location: str
+        'usa', 'br' or 'global
 
     Returns
     -------
@@ -188,110 +189,217 @@ def meteorology(time_start, meteo_inst_source, meteo_daily_source):
 
     Notes
     -----
-    Accepted collections:
+    USA collections:
     Inst : NASA/NLDAS/FORA0125_H002
     Daily : IDAHO_EPSCOR/GRIDMET
+
+    BR or global collections:
+    Inst : ECMWF/ERA5_LAND/HOURLY
+    Daily : ECMWF/ERA5_LAND/DAILY_AGGR
 
     References
     ----------
 
     """
+
     time_start = ee.Number(time_start)
 
-    meteorology_daily = ee.ImageCollection(meteo_daily_source)\
-        .filterDate(ee.Date(time_start).advance(-1, 'day'), ee.Date(time_start))
+    if meteo_location == 'usa':
 
-    meteorology_inst_collection = ee.ImageCollection(meteo_inst_source)
+        meteo_inst_source = 'NASA/NLDAS/FORA0125_H002'
+        meteo_daily_source = 'IDAHO_EPSCOR/GRIDMET'
+    
+        meteorology_daily = ee.ImageCollection(meteo_daily_source)\
+            .filterDate(ee.Date(time_start).advance(-1, 'day'), ee.Date(time_start))
 
-    # Linear interpolation
-    previous_time = time_start.subtract(2*60*60*1000)
-    next_time = time_start.add(2*60*60*1000)
-    previous_image = (
-        meteorology_inst_collection
-        .filterDate(previous_time, time_start)
-        .limit(1, 'system:time_start', False).first()
-    )
-    next_image = (
-        meteorology_inst_collection
-        .filterDate(time_start, next_time)
-        .limit(1, 'system:time_start', True).first()
-    )
-    image_previous_time = ee.Number(previous_image.get('system:time_start'))
-    image_next_time = ee.Number(next_image.get('system:time_start'))
-    delta_time = time_start.subtract(image_previous_time)\
-        .divide(image_next_time.subtract(image_previous_time))
+        meteorology_inst_collection = ee.ImageCollection(meteo_inst_source)
 
-    # Daily variables
-    # Incoming shorwave down [W m-2]
-    swdown24h = meteorology_daily.select('srad').first().rename('short_wave_down')
+        # Linear interpolation
+        previous_time = time_start.subtract(2*60*60*1000)
+        next_time = time_start.add(2*60*60*1000)
+        previous_image = (
+            meteorology_inst_collection
+            .filterDate(previous_time, time_start)
+            .limit(1, 'system:time_start', False).first()
+        )
+        next_image = (
+            meteorology_inst_collection
+            .filterDate(time_start, next_time)
+            .limit(1, 'system:time_start', True).first()
+        )
+        image_previous_time = ee.Number(previous_image.get('system:time_start'))
+        image_next_time = ee.Number(next_image.get('system:time_start'))
+        delta_time = time_start.subtract(image_previous_time)\
+            .divide(image_next_time.subtract(image_previous_time))
 
-    tmin = meteorology_daily.select('tmmn').first().rename('tmin')
-    tmax = meteorology_daily.select('tmmx').first().rename('tmax')
+        # Daily variables
+        # Incoming shorwave down [W m-2]
+        swdown24h = meteorology_daily.select('srad').first().rename('short_wave_down')
 
-    # Instantaneous short wave radiation [W m-2]
-    rso_inst = (
-        next_image.select('shortwave_radiation')
-        .subtract(previous_image.select('shortwave_radiation'))
-        .multiply(delta_time).add(previous_image.select('shortwave_radiation'))
-        .rename('rso_inst')
-    )
+        tmin = meteorology_daily.select('tmmn').first().rename('tmin')
+        tmax = meteorology_daily.select('tmmx').first().rename('tmax')
 
-    # Specific humidity [Kg Kg-1]
-    q_med = (
-        next_image.select('specific_humidity')
-        .subtract(previous_image.select('specific_humidity'))
-        .multiply(delta_time).add(previous_image.select('specific_humidity'))
-    )
+        # Instantaneous short wave radiation [W m-2]
+        rso_inst = (
+            next_image.select('shortwave_radiation')
+            .subtract(previous_image.select('shortwave_radiation'))
+            .multiply(delta_time).add(previous_image.select('shortwave_radiation'))
+            .rename('rso_inst')
+        )
 
-    # Air temperature [K]
-    tair_c = (
-        next_image.select('temperature')
-        .subtract(previous_image.select('temperature'))
-        .multiply(delta_time).add(previous_image.select('temperature'))
-        .rename('tair')
-    )
+        # Specific humidity [Kg Kg-1]
+        q_med = (
+            next_image.select('specific_humidity')
+            .subtract(previous_image.select('specific_humidity'))
+            .multiply(delta_time).add(previous_image.select('specific_humidity'))
+        )
 
-    # Wind speed u [m s-1]
-    wind_u = (
-        next_image.select('wind_u')
-        .subtract(previous_image.select('wind_u'))
-        .multiply(delta_time).add(previous_image.select('wind_u'))
-    )
+        # Air temperature [K]
+        tair_c = (
+            next_image.select('temperature')
+            .subtract(previous_image.select('temperature'))
+            .multiply(delta_time).add(previous_image.select('temperature'))
+            .rename('tair')
+        )
 
-    # Wind speed u [m s-1]
-    wind_v = (
-        next_image.select('wind_v')
-        .subtract(previous_image.select('wind_v'))
-        .multiply(delta_time).add(previous_image.select('wind_v'))
-    )
+        # Wind speed u [m s-1]
+        wind_u = (
+            next_image.select('wind_u')
+            .subtract(previous_image.select('wind_u'))
+            .multiply(delta_time).add(previous_image.select('wind_u'))
+        )
 
-    wind_med = wind_u.expression(
-        'sqrt(ux_u ** 2 + ux_v ** 2)', {'ux_u': wind_u, 'ux_v': wind_v}
-    ).rename('ux')
+        # Wind speed u [m s-1]
+        wind_v = (
+            next_image.select('wind_v')
+            .subtract(previous_image.select('wind_v'))
+            .multiply(delta_time).add(previous_image.select('wind_v'))
+        )
 
-    # Wind speed [m s-1] (FAO56 Eqn 47)
-    wind_med = wind_med.expression(
-        'ux * (4.87) / log(67.8 * z - 5.42)', {'ux': wind_med, 'z': 10.0}
-    )
+        wind_med = wind_u.expression(
+            'sqrt(ux_u ** 2 + ux_v ** 2)', {'ux_u': wind_u, 'ux_v': wind_v}
+        ).rename('ux')
 
-    # Pressure [kPa]
-    p_med = (
-        next_image.select('pressure')
-        .subtract(previous_image.select('pressure'))
-        .multiply(delta_time).add(previous_image.select('pressure'))
-        .divide(ee.Number(1000))
-    )
+        # Wind speed [m s-1] (FAO56 Eqn 47)
+        wind_med = wind_med.expression(
+            'ux * (4.87) / log(67.8 * z - 5.42)', {'ux': wind_med, 'z': 10.0}
+        )
 
-    # Actual vapor pressure [kPa] (Shuttleworth Eqn 2.10)
-    ea = p_med.expression('(1 / 0.622) * Q * P', {'Q': q_med, 'P': p_med})
+        # Pressure [kPa]
+        p_med = (
+            next_image.select('pressure')
+            .subtract(previous_image.select('pressure'))
+            .multiply(delta_time).add(previous_image.select('pressure'))
+            .divide(ee.Number(1000))
+        )
 
-    # Saturated vapor pressure [kPa] (FAO56 Eqn 11)
-    esat = tair_c.expression(
-        '0.6108 * (exp((17.27 * T_air) / (T_air + 237.3)))', {'T_air': tair_c}
-    )
+        # Actual vapor pressure [kPa] (Shuttleworth Eqn 2.10)
+        ea = p_med.expression('(1 / 0.622) * Q * P', {'Q': q_med, 'P': p_med})
 
-    # Relative humidity (%)  (FAO56 Eqn 10)
-    rh = ea.divide(esat).multiply(100).rename('RH')
+        # Saturated vapor pressure [kPa] (FAO56 Eqn 11)
+        esat = tair_c.expression(
+            '0.6108 * (exp((17.27 * T_air) / (T_air + 237.3)))', {'T_air': tair_c}
+        )
+
+        # Relative humidity (%)  (FAO56 Eqn 10)
+        rh = ea.divide(esat).multiply(100).rename('RH')
+
+    elif (meteo_location == 'br') or (meteo_location == 'global'):
+        '''Meteorological source: ERA5'''
+
+        meteo_inst_source = 'ECMWF/ERA5_LAND/HOURLY'
+        meteo_daily_source = 'ECMWF/ERA5_LAND/DAILY_AGGR'
+
+        meteorology_daily = ee.ImageCollection(meteo_daily_source)\
+            .filterDate(ee.Date(time_start),ee.Date(time_start).advance(1,'day'))
+        meteorology_inst_collection = ee.ImageCollection(meteo_inst_source)
+
+        # Linear interpolation
+        previous_time = time_start.subtract(1*60*60*1000)
+        next_time = time_start.add(1*60*60*1000)
+        previous_image = meteorology_inst_collection\
+            .filterDate(previous_time, time_start)\
+            .limit(1, 'system:time_start', False).first()
+        next_image = meteorology_inst_collection\
+            .filterDate(time_start, next_time)\
+            .limit(1, 'system:time_start', True).first()
+        
+        image_previous_time = ee.Number(previous_image.get('system:time_start'))
+        image_next_time = ee.Number(next_image.get('system:time_start'))
+
+        delta_time = time_start.subtract(image_previous_time)\
+            .divide(image_next_time.subtract(image_previous_time))
+
+        # Daily variables
+        # Incoming shorwave down (W m2)
+        swdown24h =  ee.ImageCollection(meteo_inst_source)\
+                    .filterDate(ee.Date(time_start),ee.Date(time_start).advance(1,'day'))\
+                    .select("surface_solar_radiation_downwards_hourly")\
+                    .sum()\
+                    .divide(86400)
+
+        collection_min_max=meteorology_inst_collection.select('temperature_2m')\
+                            .filterDate(ee.Date(time_start),
+                                        ee.Date(time_start).advance(1,'day'))
+
+        tmin = collection_min_max.min().rename('tmin')
+        tmax = collection_min_max.max().rename('tmax')
+
+        # Instantaneous
+        hour =  ee.Number(ee.Date(time_start).get('hour'))
+        min = ee.Number(ee.Date(time_start).get('minute'))
+        
+        time_for_accumulated = ee.Date(time_start).advance(hour.multiply(1),'hour')
+                                                  #.advance(min.multiply(1),'minute')
+
+        rso_inst =  ee.ImageCollection(meteo_inst_source)\
+                    .filterDate(ee.Date(time_start),ee.Date(time_start).advance(1,'hour'))\
+                    .select("surface_solar_radiation_downwards_hourly")\
+                    .mean()\
+                    .divide(1*60*60)\
+                    .rename('rso_inst')
+
+        # Air temperature
+        tair_c = next_image.select('temperature_2m')\
+            .subtract(previous_image.select('temperature_2m'))\
+            .multiply(delta_time).add(previous_image.select('temperature_2m'))\
+            .subtract(273.15)\
+            .rename('tair')
+
+        # Wind speed [ m/s]
+        wind_u = next_image.select('u_component_of_wind_10m')\
+            .subtract(previous_image.select('u_component_of_wind_10m'))\
+            .multiply(delta_time).add(previous_image.select('u_component_of_wind_10m'))
+
+        wind_v = next_image.select('v_component_of_wind_10m')\
+            .subtract(previous_image.select('v_component_of_wind_10m'))\
+            .multiply(delta_time).add(previous_image.select('v_component_of_wind_10m'))
+
+        wind_med = wind_u.expression(
+            'sqrt(ux_u ** 2 + ux_v ** 2)', {'ux_u': wind_u, 'ux_v': wind_v},
+        ).rename('ux')
+
+        wind_med = wind_med.expression(
+            'ux * (4.87) / log(67.8 * z - 5.42)', {'ux': wind_med, 'z': 10.0}).rename('ux')
+
+        # Dew point temperature [°K]
+        tdp = next_image.select('dewpoint_temperature_2m')\
+            .subtract(previous_image.select('dewpoint_temperature_2m'))\
+            .multiply(delta_time).add(previous_image.select('dewpoint_temperature_2m'))\
+            .rename('tdp')
+
+        # Actual vapour pressure [kPa]
+        ea = tdp.expression(
+            '0.6108 * (exp((17.27 * T_air) / (T_air + 237.3)))',{
+            'T_air': tdp.subtract(273.15)})
+
+        # SATURATED VAPOR PRESSURE [kPa]
+        esat = tair_c.expression(
+            '0.6108 * (exp((17.27 * T_air) / (T_air + 237.3)))', {'T_air': tair_c})
+
+        # RELATIVE HUMIDITY (%)
+        rh = ea.divide(esat).multiply(100).rename('RH')
+
 
     # Resample
     tmin = tmin.subtract(273.15).resample('bilinear')
@@ -1133,18 +1241,22 @@ def fexp_hot_pixel(
     # Precipitation product
     gridmet = ee.ImageCollection('IDAHO_EPSCOR/GRIDMET')\
         .filterDate(ee.Date(time_start).advance(-60, 'days'), ee.Date(time_start))
+    
+    chirps = ee.ImageCollection('UCSB-CHG/CHIRPS/DAILY')\
+        .filterDate(ee.Date(time_start).advance(-60, 'days'), ee.Date(time_start))
+
 
     etr_60mm = gridmet.select('etr').sum()
     precipt_60mm = gridmet.select('pr').sum()
     ratio = precipt_60mm.divide(etr_60mm)
 
     # Temperature adjustment offset (Allen2013 Eqn 8)
-    Tfac = etr_60mm.expression('2.6 - 13 * ratio', {'ratio': ratio})
+    #Tfac = etr_60mm.expression('2.6 - 13 * ratio', {'ratio': ratio})
 
-    Tfac = ee.Image(Tfac.where(ratio.gt(0.2), 0)).rename('Tfac')
+    #Tfac = ee.Image(Tfac.where(ratio.gt(0.2), 0)).rename('Tfac')
 
-    c_lst_hotpix = c_lst_hotpix.addBands(Tfac).select(
-        ['ndvi', 'rn_inst', 'g_inst', 'lst_nw', 'longitude', 'latitude', 'int', 'Tfac']
+    c_lst_hotpix = c_lst_hotpix.select(
+        ['ndvi', 'rn_inst', 'g_inst', 'lst_nw', 'longitude', 'latitude', 'int']
     )
 
     sum_final_hot_pix = (
@@ -1340,7 +1452,7 @@ def sensible_heat_flux(
         def map_hot(f_hot):
 
             f_hot = ee.Feature(f_hot)
-            n_Ts_hot = ee.Number(f_hot.get('lst_nw')).subtract(ee.Number(f_hot.get('Tfac')))
+            n_Ts_hot = ee.Number(f_hot.get('lst_nw')) #.subtract(ee.Number(f_hot.get('Tfac')))
             n_G_hot = ee.Number(f_hot.get('g_inst'))
             n_Rn_hot = ee.Number(f_hot.get('rn_inst'))
             n_long_hot = ee.Number(f_hot.get('longitude'))

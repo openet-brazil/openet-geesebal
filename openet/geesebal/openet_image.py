@@ -405,6 +405,16 @@ class Image():
         return ee.Image(output_images).set(self._properties)
 
     @lazy_property
+    def meteo_info(self,):
+
+        tmin, tmax, tair, ux, rh, rso_inst, rso24h = model.meteorology(
+                time_start=self._time_start,
+                meteo_location='br')
+
+        return ee.Image.cat([tmin, tmax, tair, ux, rh, rso_inst, rso24h])\
+                       .set(self._properties)
+
+    @lazy_property
     def ndvi(self,):
 
         return self.image.select(['ndvi']).set(self._properties)
@@ -451,8 +461,9 @@ class Image():
             emissivity=self.emissivity,
             savi=self.savi,
             # lai=self.lai,
-            meteo_inst_source=self._meteorology_source_inst,
-            meteo_daily_source=self._meteorology_source_daily,
+            meteo_location ='br',
+            #meteo_inst_source=self._meteorology_source_inst,
+            #meteo_daily_source=self._meteorology_source_daily,
             elev_product=self._elev_source,
             ndvi_cold=self._ndvi_cold,
             ndvi_hot=self._ndvi_hot,
