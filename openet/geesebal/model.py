@@ -133,6 +133,8 @@ def et(image, ndvi, ndwi, lst, albedo, emissivity, savi,
         )
 
         # Hot pixel
+        # TODO: Tfac function was disable as its was not working for brazil
+        # due to gridmet collection usa only
         fc_hot_pixels = fexp_hot_pixel(
             time_start, albedo, ndvi, ndwi, lst_dem, rad_inst, g_inst,
             p_lowest_NDVI, p_hottest_Ts, geometry_image, coords, proj, elev,
