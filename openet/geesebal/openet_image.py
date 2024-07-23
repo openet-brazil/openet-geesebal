@@ -154,6 +154,12 @@ class Image():
         except:
             self.et_reference_resample = None
 
+        # Sensible heat function options
+        try:
+            self.h_optmization = kwargs['h_optmization']
+        except:
+            self.h_optmization = None
+
         # Check reference ET parameters
         if (self.et_reference_factor and
                 not utils.is_number(self.et_reference_factor)):
@@ -475,6 +481,7 @@ class Image():
             coords=self.coords,
             calibration_points=self.calibration_points,
             max_iterations=self.max_iterations,
+            h_optmization = self.h_optmization
         )
 
         return et.set(self._properties)

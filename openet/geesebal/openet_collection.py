@@ -48,7 +48,7 @@ class Collection():
             #             'et_reference_band': 'eto',
             #             'et_reference_factor': 0.85
             #             'et_reference_resample': 'nearest},
-            # **kwargs
+             **kwargs
     ):
         """Earth Engine based GEESEBAL Image Collection
 
@@ -88,6 +88,7 @@ class Collection():
         self.end_date = end_date
         self.geometry = geometry
         self.cloud_cover_max = cloud_cover_max
+        
 
         # CGM - Should we check that model_args and filter_args are dict?
         if model_args is not None:
