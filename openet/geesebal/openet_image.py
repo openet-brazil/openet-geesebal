@@ -85,8 +85,10 @@ class Image():
             et_reference_resample : {'nearest', 'bilinear', 'bicubic', None}
                 Reference ET resampling.  The default is None which is
                 equivalent to nearest neighbor resampling.
-            calibration_points : int
-                Number of calibration points (the default is 6).
+            cold_calibration_points : int
+                Number of cold calibration points (the default is 6).
+            hot_calibration_points : int
+                Number of hot calibration points (the default is 6).
             max_iterations : int
                 Maximum number of iterations (the default is 15).
 
@@ -178,9 +180,13 @@ class Image():
 
         # CGM - Testing out passing as a kwargs but could be dedicated function params
         try:
-            self.calibration_points = kwargs['calibration_points']
+            self.cold_calibration_points = kwargs['cold_calibration_points']
         except:
-            self.calibration_points = 6
+            self.cold_calibration_points = 10
+        try:
+            self.hot_calibration_points = kwargs['hot_calibration_points']
+        except:
+            self.hot_calibration_points = 10
 
         try:
             self.max_iterations = kwargs['max_iterations']
@@ -462,7 +468,8 @@ class Image():
             geometry_image=self.geometry,
             proj=self.proj,
             coords=self.coords,
-            calibration_points=self.calibration_points,
+            cold_calibration_points=self.cold_calibration_points,
+            hot_calibration_points=self.hot_calibration_points,
             max_iterations=self.max_iterations,
         )
 

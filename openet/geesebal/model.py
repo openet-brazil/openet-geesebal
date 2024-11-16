@@ -12,7 +12,7 @@ def et(image, ndvi, ndwi, lst, albedo, emissivity, savi,
        meteo_inst_source, meteo_daily_source, elev_product,
        ndvi_cold, ndvi_hot, lst_cold, lst_hot,
        time_start, geometry_image, proj, coords,
-       calibration_points=10, max_iterations=15,
+       cold_calibration_points=10, hot_calibration_points=10, max_iterations=15,
        ):
     """
     Daily Evapotranspiration [mm day-1].
@@ -54,8 +54,10 @@ def et(image, ndvi, ndwi, lst, albedo, emissivity, savi,
         Landsat image projection.
     coords : ee.Image
         Landsat image Latitude and longitude.
-    calibration_points : int
-        Number of calibration points (the default is 10).
+    cold_calibration_points : int
+        Number of cold pixel calibration points (the default is 10).
+    hot_calibration_points : int
+        Number of hot pixel calibration points (the default is 10).
     max_iterations : int
         Maximum number of iterations (the default is 15).
 
@@ -75,8 +77,8 @@ def et(image, ndvi, ndwi, lst, albedo, emissivity, savi,
     """
     # Image properties
     date = ee.Date(time_start)
-    year = ee.Number(date.get('year'))
-    month = ee.Number(date.get('month'))
+    # year = ee.Number(date.get('year'))
+    # month = ee.Number(date.get('month'))
     # day = ee.Number(date.get('day'))
     hour = ee.Number(date.get('hour'))
     minutes = ee.Number(date.get('minutes'))
@@ -127,35 +129,35 @@ def et(image, ndvi, ndwi, lst, albedo, emissivity, savi,
         # Cold pixel for wet conditions repretation of the image
         fc_cold_pixels = cold_pixel(
             albedo, ndvi, ndwi, lst_dem, p_top_NDVI, p_coldest_Ts,
-            geometry_image, coords, proj, elev, calibration_points,
+            geometry_image, coords, proj, elev, cold_calibration_points,
         )
 
         # Hot pixel
         fc_hot_pixels = fexp_hot_pixel(
-            time_start, albedo, ndvi, ndwi, lst_dem, rad_inst, g_inst,
-            p_lowest_NDVI, p_hottest_Ts, geometry_image, coords, proj, elev,
-            calibration_points,
+            time_start, albedo, ndvi, ndwi, lst, lst_dem, rad_inst, g_inst,
+            tair, ux, p_lowest_NDVI, p_hottest_Ts, geometry_image, coords, proj, elev,
+            hot_calibration_points,
         )
-        # print(fc_cold_pixels.getInfo())
-        # print(fc_hot_pixels.getInfo())
+
+        # print(fc_cold_pixels.size().getInfo(), fc_hot_pixels.size().getInfo())
 
         # Instantaneous sensible heat flux (h)
         # BCCA - added conditional in case no endmembers are found
-        h_inst = ee.Image(
-            ee.Algorithms.If(
-                ee.Number(fc_cold_pixels.size()).eq(0).Or(ee.Number(fc_hot_pixels.size()).eq(0)),
-                ee.Image.constant(0).updateMask(0).rename('h_inst'),
-                sensible_heat_flux(
-                    savi, ux, fc_cold_pixels, fc_hot_pixels, lst_dem, lst, elev, geometry_image,
-                    max_iterations,
-                )
-            )
-        )
-
-        # h_inst = sensible_heat_flux(
-        #     savi, ux, fc_cold_pixels, fc_hot_pixels, lst_dem, lst, elev, geometry_image,
-        #     max_iterations,
+        # h_inst = ee.Image(
+        #     ee.Algorithms.If(
+        #         ee.Number(fc_cold_pixels.size()).eq(0).Or(ee.Number(fc_hot_pixels.size()).eq(0)),
+        #         ee.Image.constant(0).updateMask(0).rename('h_inst'),
+        #         sensible_heat_flux(
+        #             savi, ux, fc_cold_pixels, fc_hot_pixels, lst_dem, lst, elev, geometry_image,
+        #             max_iterations,
+        #         )
+        #     )
         # )
+
+        h_inst = sensible_heat_flux(
+            savi, ux, fc_cold_pixels, fc_hot_pixels, lst_dem, lst, elev, geometry_image,
+            max_iterations,
+        )
 
         # Daily evapotranspiration (et)
         et_24hr = daily_et(h_inst, g_inst, rad_inst, lst_dem, rad_24h)
@@ -346,7 +348,7 @@ def tao_sw(dem, tair, rh, sun_elevation, cos_zn):
 
     solar_zenith_radians = solar_zenith.multiply(DEG2RAD)
     # Cos only in flat areas
-    #cos_theta = solar_zenith_radians.cos()
+    # cos_theta = solar_zenith_radians.cos()
 
     # Broad-band atmospheric transmissivity (ASCE-EWRI (2005))
     tao_sw_img = pres.expression(
@@ -705,7 +707,7 @@ def cold_pixel(
 
     ndvi_neg = pos_ndvi.multiply(-1).rename('ndvi_neg')
 
-    lst_neg = lst_dem.multiply(-1).rename('lst_neg').rename('lst_neg')
+    lst_neg = lst_dem.multiply(-1).rename('lst_neg')
     # lst_nw = lst_dem.updateMask(ndwi.lte(0)).rename('lst_nw')
     lst_nw = lst_dem.rename('lst_nw')
 
@@ -1022,8 +1024,23 @@ def radiation_24h(time_start, tmax, tmin, elev, sun_elevation, cos_terrain, rso2
 
 
 def fexp_hot_pixel(
-        time_start, albedo, ndvi, ndwi, lst_dem, rn, g, ndvi_hot, lst_hot,
-        geometry_image, coords, proj, dem, calibration_points=10,
+        time_start,
+        albedo,
+        ndvi,
+        ndwi,
+        lst,
+        lst_dem,
+        rn,
+        g,
+        tair,
+        ux,
+        ndvi_hot,
+        lst_hot,
+        geometry_image,
+        coords,
+        proj,
+        dem,
+        calibration_points=10,
 ):
     """
     Simplified CIMEC method to select the hot pixel
@@ -1037,8 +1054,10 @@ def fexp_hot_pixel(
         Normalized difference vegetation index.
     ndwi : ee.Image
         Normalized difference water index.
-    lst_dem : ee.Image
+    lst : ee.Image
         Land surface temperature [K].
+    lst_dem : ee.Image
+        Land surface temperature [K] corrected by altitude.
     rn : ee.Image
         Instantaneous Net Radiation [W m-2]
     g : ee.Image
@@ -1099,7 +1118,8 @@ def fexp_hot_pixel(
     # Create a homogeneous ndvi mask
     stdev_ndvi = homogeneous_mask(ndvi, proj)
 
-    images = pos_ndvi.addBands([ndvi, ndvi_neg, rn, g, pos_ndvi, lst_neg, lst_nw, coords])
+    images = pos_ndvi.addBands([ndvi, ndvi_neg, rn, g, pos_ndvi,
+                               lst_neg, lst_nw, lst, tair, ux, coords])
 
     d_perc_down_ndvi = (
         images.select('post_ndvi')
@@ -1144,7 +1164,8 @@ def fexp_hot_pixel(
     Tfac = ee.Image(Tfac.where(ratio.gt(0.2), 0)).rename('Tfac')
 
     c_lst_hotpix = c_lst_hotpix.addBands(Tfac).select(
-        ['ndvi', 'rn_inst', 'g_inst', 'lst_nw', 'longitude', 'latitude', 'int', 'Tfac']
+        ['ndvi', 'rn_inst', 'g_inst', 'lst', 'lst_nw', 'tair',
+         'ux', 'longitude', 'latitude', 'int', 'Tfac']
     )
 
     sum_final_hot_pix = (
@@ -1260,6 +1281,9 @@ def sensible_heat_flux(
         Advanced Training and Users Manual. 2002.
 
     """
+    # number of iterations to correct for instability
+    iterations = ee.List.repeat(1, 15)
+
     # Vegetation height [m]
     n_veg_height = ee.Number(0.5)
 
@@ -1308,29 +1332,29 @@ def sensible_heat_flux(
         {'i_ufric_ws': i_ufric_ws, 'n_height': n_height, 'n_zom': n_zom, 'n_K': n_K}
     )
 
-    # Momentum roughness length for each pixel.
-    i_zom = lst.expression('exp((5.62 * SAVI) - 5.809)', {'SAVI': savi})
+    # # Momentum roughness length for each pixel.
+    # i_zom = lst.expression('exp((5.62 * SAVI) - 5.809)', {'SAVI': savi})
 
-    # Momentum roughness slope/aspect Correction.  (Allen2002  A12 Eqn9)
-    i_zom = i_zom.expression(
-        'zom * (1 + (slope - 5) / 20)',
-        {'zom': i_zom, 'slope': slope_aspect.select('slope')}
-    )
+    # # Momentum roughness slope/aspect Correction.  (Allen2002  A12 Eqn9)
+    # i_zom = i_zom.expression(
+    #     'zom * (1 + (slope - 5) / 20)',
+    #     {'zom': i_zom, 'slope': slope_aspect.select('slope')}
+    # )
 
-    # Friction velocity for each pixel. (Allen2002 Eqn 30)
-    i_ufric = lst.expression(
-        '(n_K * u200) / log(height / i_zom)',
-        {'u200': i_u200, 'height': n_height, 'i_zom': n_zom, 'n_K': n_K}
-    ).rename('u_fr')
+    # # Friction velocity for each pixel. (Allen2002 Eqn 30)
+    # i_ufric = lst.expression(
+    #     '(n_K * u200) / log(height / i_zom)',
+    #     {'u200': i_u200, 'height': n_height, 'i_zom': n_zom, 'n_K': n_K}
+    # ).rename('u_fr')
 
     # Heights [m] above the zero plane displacement.
     z1 = ee.Number(0.01)
     z2 = ee.Number(2)
 
-    # Aerodynamic resistance to heat transport (Allen2002 Eqn 26)
-    i_rah = i_ufric.expression(
-        '(log(z2 / z1)) / (i_ufric * 0.41)', {'z2': z2, 'z1': z1, 'i_ufric': i_ufric}
-    ).rename(['rah'])
+    # # Aerodynamic resistance to heat transport (Allen2002 Eqn 26)
+    # i_rah = i_ufric.expression(
+    #     '(log(z2 / z1)) / (i_ufric * 0.41)', {'z2': z2, 'z1': z1, 'i_ufric': i_ufric}
+    # ).rename(['rah'])
 
     def map_cold(f_cold):
 
@@ -1341,11 +1365,14 @@ def sensible_heat_flux(
 
             f_hot = ee.Feature(f_hot)
             n_Ts_hot = ee.Number(f_hot.get('lst_nw')).subtract(ee.Number(f_hot.get('Tfac')))
+            n_Ts_true_hot = ee.Number(f_hot.get('lst'))
             n_G_hot = ee.Number(f_hot.get('g_inst'))
             n_Rn_hot = ee.Number(f_hot.get('rn_inst'))
+            n_ux_hot = ee.Number(f_hot.get('ux'))
+            n_Tair_hot = ee.Number(f_hot.get('tair')).add(273.15)
             n_long_hot = ee.Number(f_hot.get('longitude'))
             n_lat_hot = ee.Number(f_hot.get('latitude'))
-            p_hot_pix = ee.Geometry.Point([n_long_hot, n_lat_hot])
+            # p_hot_pix = ee.Geometry.Point([n_long_hot, n_lat_hot])
 
             n_ro_hot = n_Ts_hot.multiply(-0.0046).add(2.5538)
 
@@ -1353,186 +1380,273 @@ def sensible_heat_flux(
             # Sensible heat flux at the hot pixel
             n_H_hot = ee.Number(n_Rn_hot).subtract(ee.Number(n_G_hot))
 
-            # First image of iterative process
+            n_zom_hot = n_zom
 
-            img_ufr_rah = ee.Image.cat([i_ufric, i_rah])
+            n_ufric_hot = n_ux_hot.expression(
+                '(n_K * ux)/ log(n_zx /n_zom)', {
+                    'n_K': n_K,
+                    'n_zx': n_zx,
+                    'n_zom': n_zom_hot,
+                    'ux': n_ux_hot})
+
+            n_u200_hot = n_zom_hot.expression(
+                'i_ufric_ws *  (log(n_height/n_zom)/n_K)', {
+                    'i_ufric_ws': n_ufric_hot,
+                    'n_height': n_height,
+                    'n_zom': n_zom_hot,
+                    'n_K': n_K})
+            n_u200_hot = n_u200_hot.max(ee.Number(4))
+
+            # Calculate H initial variables
+            n_ufric_hot = n_ux_hot.expression(
+                '(n_K * ux)/ log(n_zx /n_zom)', {
+                    'n_K': n_K,
+                    'n_zx': n_zx,
+                    'n_zom': n_zom_hot,
+                    'ux': n_ux_hot})
+
+            n_rah_hot = n_ufric_hot.expression(
+                '(log(z2/z1))/(i_ufric*0.41)', {
+                    'z2': z2,
+                    'z1': z1,
+                    'i_ufric': n_ufric_hot})
+
+            n_ro_hot = (ee.Number(-0.0046).multiply(n_Tair_hot)).add(ee.Number(2.5538))
+
+            n_H_hot = ee.Number(n_Rn_hot).subtract(ee.Number(n_G_hot))
+
+            # First feature of iterative process
+
+            hot_pixel = ee.Feature(f_hot.geometry(), {
+                'ufric': n_ufric_hot,
+                'rah': n_rah_hot,
+                # 'psi_m_200': 0,
+                # 'psi_h_2': 0,
+                # 'psi_h_01': 0,
+            }
+            )
 
             # Iterative_process
-            def iterative(empty, img):
+            def iterative_hot(empty, old):
 
-                img = ee.Image(img)
+                feat = ee.Feature(old)
+                n_rah_hot = ee.Number(feat.get('rah')).max(0)
+                n_ufric_hot = ee.Number(feat.get('ufric')).max(0)
 
-                d_rah_hot = (
-                    img.select('rah')
-                    .reduceRegion(
-                        reducer=ee.Reducer.first(),
-                        geometry=p_hot_pix,
-                        scale=30,
-                        maxPixels=10e14,
-                    )
-                    .combine(ee.Dictionary({'rah': 0}), overwrite=False)
+                n_L_hot = ee.Number(n_ufric_hot.expression(
+                    '-(i_ro*n_Cp*(i_ufric**3)*i_lst)/(0.41*9.81*i_H)',
+                    {'i_ro': n_ro_hot,
+                     'n_Cp': n_Cp,
+                     'i_ufric': n_ufric_hot,
+                     'i_lst': n_Ts_true_hot,
+                     'i_H': n_H_hot}))
+
+                n_L_hot = n_L_hot.max(ee.Number(-1000))
+
+                n_psim_200 = ee.Number(n_L_hot.expression(
+                    '-5*(height/n_L)', {'height': n_height, 'n_L': n_L_hot}))
+                n_psih_2 = ee.Number(n_L_hot.expression(
+                    '-5*(height/n_L)', {'height': z2, 'n_L': n_L_hot}))
+                n_psih_01 = ee.Number(n_L_hot.expression(
+                    '-5*(height/n_L)', {'height': z1, 'n_L': n_L_hot}))
+
+                n_x200 = ee.Number(n_L_hot.expression(
+                    '(1-(16*(height/n_L)))**0.25',
+                    {'height': n_height, 'n_L': n_L_hot}))
+                n_x2 = ee.Number(n_L_hot.expression(
+                    '(1-(16*(height/n_L)))**0.25',
+                    {'height': z2, 'n_L': n_L_hot}))
+                n_x01 = ee.Number(n_L_hot.expression(
+                    '(1-(16*(height/n_L)))**0.25',
+                    {'height': z1, 'n_L': n_L_hot}))
+
+                n_psimu_200 = ee.Number(n_x200.expression(
+                    '2*log((1+n_x200)/2)+log((1+n_x200**2)/2)-2*atan(n_x200)+0.5*pi',
+                    {'n_x200': n_x200, 'pi': ee.Number(math.pi)}))
+                n_psihu_2 = ee.Number(n_x2.expression(
+                    '2*log((1+n_x2**2)/2)',
+                    {'n_x2': n_x2}))
+                n_psihu_01 = ee.Number(n_x01.expression(
+                    '2*log((1+n_x01**2)/2)',
+                    {'n_x01': n_x01}))
+
+                n_psim_200 = ee.Number(ee.Algorithms.If(
+                    n_L_hot.lt(0),
+                    n_psimu_200,  # Assign value if n_L_hot < 0
+                    ee.Algorithms.If(
+                        n_L_hot.eq(0),
+                        ee.Number(0),  # Assign value if n_L_hot == 0
+                        n_psim_200   # Assign value if n_L_hot > 0
+                    )))
+                n_psih_2 = ee.Number(ee.Algorithms.If(
+                    n_L_hot.lt(0),
+                    n_psihu_2,  # Assign value if n_L_hot < 0
+                    ee.Algorithms.If(
+                        n_L_hot.eq(0),
+                        ee.Number(0),  # Assign value if n_L_hot == 0
+                        n_psih_2   # Assign value if n_L_hot > 0
+                    )))
+                n_psih_01 = ee.Number(ee.Algorithms.If(
+                    n_L_hot.lt(0),
+                    n_psihu_01,  # Assign value if n_L_hot < 0
+                    ee.Algorithms.If(
+                        n_L_hot.eq(0),
+                        ee.Number(0),  # Assign value if n_L_hot == 0
+                        n_psih_01   # Assign value if n_L_hot > 0
+                    )))
+
+                n_ufric_hot = ee.Number(n_u200_hot.expression(
+                    '(u200*0.41)/(log(height/i_zom)-i_psim_200)',
+                    {'u200': n_u200_hot, 'height': n_height, 'i_zom': n_zom_hot, 'i_psim_200': n_psim_200}))
+
+                n_ufric_hot = n_ufric_hot.max(ee.Number(0.02))
+
+                n_rah_hot = ee.Number(n_ufric_hot.expression(
+                    '(log(z2/z1)-psi_h2+psi_h01)/(i_ufric*0.41)',
+                    {'z2': z2, 'z1': z1, 'i_ufric': n_ufric_hot, 'psi_h2': n_psih_2, 'psi_h01': n_psih_01}))
+
+                return ee.Feature(hot_pixel.geometry(), {
+                    'ufric': n_ufric_hot,
+                    'rah': n_rah_hot,
+                    # 'psi_m_200': 0,
+                    # 'psi_h_2': 0,
+                    # 'psi_h_01': 0,
+                }
                 )
-                n_rah_hot = ee.Number(d_rah_hot.get('rah'))
-                n_dT_hot = (n_H_hot.multiply(n_rah_hot)).divide(n_ro_hot.multiply(n_Cp))
-                n_dT_cold = ee.Number(0)
-                n_coef_a = (n_dT_cold.subtract(n_dT_hot)).divide(n_Ts_cold.subtract(n_Ts_hot))
-                n_coef_b = n_dT_hot.subtract(n_coef_a.multiply(n_Ts_hot))
-
-                i_dT = lst_dem.expression(
-                    '(n_coef_a * lst_dem) + n_coef_b',
-                    {'n_coef_a': n_coef_a, 'n_coef_b': n_coef_b, 'lst_dem': lst_dem}
-                )
-
-                i_Ta = lst.expression('lst - i_dT', {'lst': lst, 'i_dT': i_dT})
-
-                i_ro = i_Ta.expression('(-0.0046 * i_Ta) + 2.5538', {'i_Ta': i_Ta}).toFloat()
-
-                i_H = i_dT.expression(
-                    '(i_ro * n_Cp * i_dT) / i_rah',
-                    {'i_ro': i_ro, 'n_Cp': n_Cp, 'i_dT': i_dT, 'i_rah': img.select('rah')}
-                )
-
-                i_L = i_dT.expression(
-                    '-(i_ro * n_Cp * (i_ufric ** 3) * lst) / (0.41 * 9.81 * i_H)',
-                    {
-                        'i_ro': i_ro,
-                        'n_Cp': n_Cp,
-                        'i_ufric': img.select('u_fr'),
-                        'lst': lst,
-                        'i_H': i_H,
-                    }
-                )
-                i_L = i_L.where(i_L.lt(-1000), -1000)
-
-                # TODO: Do these need to be ee.Number()?
-                i_psim_200 = i_L.expression(
-                    '-5 * (height / i_L)', {'height': ee.Number(200), 'i_L': i_L}
-                )
-                i_psih_2 = i_L.expression(
-                    '-5 * (height / i_L)', {'height': ee.Number(2), 'i_L': i_L}
-                )
-                i_psih_01 = i_L.expression(
-                    '-5 * (height/i_L)', {'height': ee.Number(0.1), 'i_L': i_L}
-                )
-
-                i_x200 = i_L.expression(
-                    '(1 - (16 * (height / i_L))) ** 0.25', {'height': ee.Number(200), 'i_L': i_L}
-                )
-                i_x2 = i_L.expression(
-                    '(1 - (16 * (height / i_L))) ** 0.25', {'height': ee.Number(2), 'i_L': i_L}
-                )
-                i_x01 = i_L.expression(
-                    '(1 - (16 * (height / i_L))) ** 0.25', {'height': ee.Number(0.1), 'i_L': i_L}
-                )
-
-                i_psimu_200 = i_x200.expression(
-                    '2 * log((1 + i_x200) / 2) + log((1 + i_x200 ** 2) / 2)'
-                    ' - 2 * atan(i_x200) + 0.5 * pi',
-                    {'i_x200': i_x200, 'pi': ee.Number(math.pi)}
-                )
-                i_psihu_2 = i_x2.expression('2 * log((1 + i_x2 ** 2) / 2)', {'i_x2': i_x2})
-                i_psihu_01 = i_x01.expression('2 * log((1 + i_x01 ** 2) / 2)', {'i_x01': i_x01})
-
-                i_psim_200 = i_psim_200.where(i_L.lt(0), i_psimu_200)
-                i_psih_2 = i_psih_2.where(i_L.lt(0), i_psihu_2)
-                i_psih_01 = i_psih_01.where(i_L.lt(0), i_psihu_01)
-                i_psim_200 = i_psim_200.where(i_L.eq(0), 0)
-                i_psih_2 = i_psih_2.where(i_L.eq(0), 0)
-                i_psih_01 = i_psih_01.where(i_L.eq(0), 0)
-
-                i_ufric = img.expression(
-                    '(u200 * 0.41) / (log(height / i_zom) - i_psim_200)',
-                    {'u200': i_u200, 'height': n_height, 'i_zom': i_zom, 'i_psim_200': i_psim_200}
-                )
-                i_ufric = i_ufric.where(i_ufric.lt(0.02), 0.02).rename('u_fr')
-
-                i_rah = img.expression(
-                    '(log(z2 / z1) - psi_h2 + psi_h01) / (i_ufric * 0.41)',
-                    {
-                        'z2': z2,
-                        'z1': z1,
-                        'i_ufric': i_ufric,
-                        'psi_h2': i_psih_2,
-                        'psi_h01': i_psih_01,
-                    }
-                ).rename('rah')
-
-                return ee.Image.cat([i_ufric, i_rah])
 
             # Apply iterative function
 
-            iterations = ee.List.repeat(1, max_iterations)
+            hot_pixel = ee.Feature(iterations.iterate(iterative_hot, hot_pixel))
 
-            img_h_inputs_list = ee.List(iterations.iterate(iterative, img_ufr_rah))
-
-            img_h_inputs_last_img = ee.Image(img_h_inputs_list)
-
-            d_rah_hot = (
-                img_h_inputs_last_img.select('rah')
-                .reduceRegion(
-                    reducer=ee.Reducer.first(),
-                    geometry=p_hot_pix,
-                    scale=30,
-                    maxPixels=10e14
-                )
-                .combine(ee.Dictionary({'rah': 0}), overwrite=False)
-            )
-            n_rah_hot = ee.Number(d_rah_hot.get('rah'))
+            n_rah_hot = ee.Number(hot_pixel.get('rah'))
             n_dT_hot = (n_H_hot.multiply(n_rah_hot)).divide(n_ro_hot.multiply(n_Cp))
             n_dT_cold = ee.Number(0)
             n_coef_a = (n_dT_cold.subtract(n_dT_hot)).divide(n_Ts_cold.subtract(n_Ts_hot))
             n_coef_b = n_dT_hot.subtract(n_coef_a.multiply(n_Ts_hot))
 
-            i_dT = lst_dem.expression(
-                '(n_coef_a * lst_dem) + n_coef_b',
-                {'n_coef_a': n_coef_a, 'n_coef_b': n_coef_b, 'lst_dem': lst_dem}
-            )
+            return ee.Feature(None, {'a': n_coef_a, 'b': n_coef_b})
+        return fc_hot_pixels.toList(100).map(map_hot)
 
-            i_Ta = lst.expression('lst - i_dT', {'lst': lst, 'i_dT': i_dT})
+    dict_linear_coeffs = ee.FeatureCollection(fc_cold_pixels.toList(100).map(map_cold).flatten())
 
-            i_ro = i_Ta.expression('(-0.0046 * i_Ta) + 2.5538', {'i_Ta': i_Ta}).toFloat()
+    # print(dict_linear_coeffs)
+    coeff_a_list = dict_linear_coeffs.aggregate_array('a')
+    coeff_b_list = dict_linear_coeffs.aggregate_array('b')
 
-            i_H_final = img_h_inputs_last_img.expression(
-                '(i_ro * n_Cp * i_dT_int) / i_rah',
-                {
-                    'i_ro': i_ro,
-                    'n_Cp': n_Cp,
-                    'i_dT_int': i_dT,
-                    'i_rah': img_h_inputs_last_img.select('rah'),
-                }
-            ).rename('H')
+    # print(coeff_a_list)
+    # print(coeff_b_list)
+    n_coef_a = ee.Number(coeff_a_list.reduce(ee.Reducer.median()))
+    # n_coef_a_std = coeff_a_list.reduce(ee.Reducer.stdDev());
 
-            return i_H_final
+    n_coef_b = ee.Number(coeff_b_list.reduce(ee.Reducer.median()))
+    # n_coef_b_std = coeff_b_list.reduce(ee.Reducer.stdDev());
 
-        # lst1 = []
-        # for f_hot in fc_hot_pixels.toList(1000).getInfo():
-        #     lst1.append(map_hot(f_hot))
-        # return lst1
+    # print(n_coef_a, n_coef_b)
 
-        # CGM: Can the 10 be set from fc_hot_pixels.size() or as an input to the function?
-        #   This value is the maximum number of values to include in the list,
-        #   so it is okay if we don't set it as long as calibrations points <= 10
-        return fc_hot_pixels.toList(10).map(map_hot)
+    i_dT = lst_dem.expression(
+        '(n_coef_a * i_lst_dem) + n_coef_b', {
+            'n_coef_a': n_coef_a,
+            'n_coef_b': n_coef_b,
+            'i_lst_dem': lst_dem}).rename('dT')
 
-    # print('cold pixels', fc_cold_pixels.getInfo())
-    # print('hot pixels', fc_hot_pixels.getInfo())
+    i_Ta = lst_dem.expression(
+        'i_lst - i_dT', {
+            'i_lst': lst,
+            'i_dT': i_dT})
 
-    # CGM: Can the 10 be set from fc_hot_pixels.size() or as an input to the function?
-    #   This value is the maximum number of values to include in the list,
-    #   so it is okay if we don't set it as long as calibrations points <= 10
-    i_H_final = ee.Image(
-        ee.Algorithms.If(
-            fc_cold_pixels.size().eq(0).Or(fc_hot_pixels.size().eq(0)),
-            ee.Image().rename('H'),
-            ee.ImageCollection(fc_cold_pixels.toList(10).map(map_cold).flatten()).mean()
-        )
-    )
+    i_ro = i_Ta.expression(
+        '(-0.0046 * i_Ta) + 2.5538', {
+            'i_Ta': i_Ta}
+    ).rename('ro')
 
-    # lst2 = []
-    # for f_cold in fc_cold_pixels.toList(1000).getInfo():
-    #     lst2.append(map_cold(f_cold))
+    def iterative_img(empty, img):
 
-    # i_H_final = ee.ImageCollection(ee.List(lst2).flatten()).mean()
+        img = ee.Image(img)
+
+        i_H = img.expression(
+            '(i_ro*n_Cp*i_dT)/i_rah', {
+                'i_ro': i_ro,
+                'n_Cp': n_Cp,
+                'i_dT': i_dT,
+                'i_rah': img.select('rah')}).rename('H')
+
+        i_L = img.expression(
+            '-(i_ro*n_Cp*(i_ufric**3)*i_lst)/(0.41*9.81*i_H)',
+            {'i_ro': i_ro,
+             'n_Cp': n_Cp,
+             'i_ufric': img.select('u_fr'),
+             'i_lst': lst,
+             'i_H': i_H}).rename('L')
+        i_L = i_L.where(i_L.lt(-1000), -1000)
+
+        i_psim_200 = i_L.expression(
+            '-5*(height/i_L)', {'height': ee.Number(200), 'i_L': i_L})
+        i_psih_2 = i_L.expression(
+            '-5*(height/i_L)', {'height': ee.Number(2), 'i_L': i_L})
+        i_psih_01 = i_L.expression(
+            '-5*(height/i_L)', {'height': ee.Number(0.1), 'i_L': i_L})
+
+        i_x200 = i_L.expression(
+            '(1-(16*(height/i_L)))**0.25',
+            {'height': ee.Number(200), 'i_L': i_L})
+        i_x2 = i_L.expression(
+            '(1-(16*(height/i_L)))**0.25',
+            {'height': ee.Number(2), 'i_L': i_L})
+        i_x01 = i_L.expression(
+            '(1-(16*(height/i_L)))**0.25',
+            {'height': ee.Number(0.1), 'i_L': i_L})
+
+        i_psimu_200 = i_x200.expression(
+            '2*log((1+i_x200)/2)+log((1+i_x200**2)/2)-2*atan(i_x200)+0.5*pi',
+            {'i_x200': i_x200, 'pi': ee.Number(math.pi)})
+        i_psihu_2 = i_x2.expression(
+            '2*log((1+i_x2**2)/2)',
+            {'i_x2': i_x2})
+        i_psihu_01 = i_x01.expression(
+            '2*log((1+i_x01**2)/2)',
+            {'i_x01': i_x01})
+
+        i_psim_200 = i_psim_200.where(i_L.lt(0), i_psimu_200)
+        i_psih_2 = i_psih_2.where(i_L.lt(0), i_psihu_2)
+        i_psih_01 = i_psih_01.where(i_L.lt(0), i_psihu_01)
+        i_psim_200 = i_psim_200.where(i_L.eq(0), 0)
+        i_psih_2 = i_psih_2.where(i_L.eq(0), 0)
+        i_psih_01 = i_psih_01.where(i_L.eq(0), 0)
+
+        i_ufric = img.expression(
+            '(u200*0.41)/(log(height/i_zom)-i_psim_200)',
+            {'u200': i_u200, 'height': n_height, 'i_zom': n_zom, 'i_psim_200': i_psim_200})
+        i_ufric = i_ufric.where(i_ufric.lt(0.02), 0.02).rename('u_fr')
+
+        i_rah = img.expression(
+            '(log(z2/z1)-psi_h2+psi_h01)/(i_ufric*0.41)',
+            {'z2': z2, 'z1': z1, 'i_ufric': i_ufric, 'psi_h2': i_psih_2, 'psi_h01': i_psih_01}).rename('rah')
+
+        return ee.Image.cat([i_ufric, i_rah])
+
+    i_ufric = lst.expression(
+        '(n_K *u200) /(log(height/i_zom))', {
+            'u200': i_u200,
+            'height': n_height,
+            'i_zom': n_zom,
+            'n_K': n_K}).rename('u_fr')
+
+    i_rah = lst.expression(
+        '(log(z2/z1))/(i_ufric*0.41)', {
+            'z2': z2,
+            'z1': z1,
+            'i_ufric': i_ufric}).rename('rah')
+
+    img_ufr_rah = ee.Image.cat([i_ufric, i_rah])
+
+    i_h_inputs = ee.Image(iterations.iterate(iterative_img, img_ufr_rah))
+
+    i_h = lst.expression(
+        '(i_ro*n_Cp*i_dT_int)/i_rah',
+        {'i_ro': i_ro,
+         'n_Cp': n_Cp,
+         'i_dT_int': i_dT,
+         'i_rah': i_h_inputs.select('rah')}).rename('H')
 
     # LL - Needs more analysis.
     '''
@@ -1546,7 +1660,7 @@ def sensible_heat_flux(
     ).rename('et_ad')
     '''
 
-    return i_H_final.rename('h_inst')
+    return i_h.rename('h_inst')
 
 
 def daily_et(h_inst, g_inst, rn_inst, lst_dem, rad_24h):
