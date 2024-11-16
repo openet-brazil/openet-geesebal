@@ -142,22 +142,23 @@ def et(image, ndvi, ndwi, lst, albedo, emissivity, savi,
         # print(fc_cold_pixels.size().getInfo(), fc_hot_pixels.size().getInfo())
 
         # Instantaneous sensible heat flux (h)
-        # BCCA - added conditional in case no endmembers are found
-        # h_inst = ee.Image(
-        #     ee.Algorithms.If(
-        #         ee.Number(fc_cold_pixels.size()).eq(0).Or(ee.Number(fc_hot_pixels.size()).eq(0)),
-        #         ee.Image.constant(0).updateMask(0).rename('h_inst'),
-        #         sensible_heat_flux(
-        #             savi, ux, fc_cold_pixels, fc_hot_pixels, lst_dem, lst, elev, geometry_image,
-        #             max_iterations,
-        #         )
-        #     )
-        # )
-
-        h_inst = sensible_heat_flux(
-            savi, ux, fc_cold_pixels, fc_hot_pixels, lst_dem, lst, elev, geometry_image,
-            max_iterations,
+        h_inst = ee.Image(
+            ee.Algorithms.If(
+                ee.Number(fc_cold_pixels.size()).eq(0).Or(ee.Number(fc_hot_pixels.size()).eq(0)),
+                ee.Image.constant(0).updateMask(0).rename('h_inst'),
+                sensible_heat_flux(
+                    savi, ux, fc_cold_pixels, fc_hot_pixels, lst_dem, lst, elev, geometry_image,
+                    max_iterations,
+                )
+            )
         )
+
+        # BCCA - keeping this for debugging
+
+        # h_inst = sensible_heat_flux(
+        #     savi, ux, fc_cold_pixels, fc_hot_pixels, lst_dem, lst, elev, geometry_image,
+        #     max_iterations,
+        # )
 
         # Daily evapotranspiration (et)
         et_24hr = daily_et(h_inst, g_inst, rad_inst, lst_dem, rad_24h)
