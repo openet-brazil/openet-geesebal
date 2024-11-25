@@ -479,9 +479,10 @@ class Image():
             geometry_image=self.geometry,
             proj=self.proj,
             coords=self.coords,
+            etr = self.et_reference,
             calibration_points=self.calibration_points,
             max_iterations=self.max_iterations,
-            h_optmization = self.h_optmization
+            h_optmization = self.h_optmization,
         )
 
         return et.set(self._properties)
