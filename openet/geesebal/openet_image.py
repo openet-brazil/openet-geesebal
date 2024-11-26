@@ -27,12 +27,12 @@ def lazy_property(fn):
 class Image():
     """Google Earth Engine SEBAL - GEESEBAL for Landsat image"""
 
-    _C2_LST_CORRECT = False  # Enable (True) C2 LST correction to recalculate LST
+    _C2_LST_CORRECT = True  # Enable (True) C2 LST correction to recalculate LST
 
     def __init__(
             self, image,
-            meteorology_source_inst='NASA/NLDAS/FORA0125_H002',
-            meteorology_source_daily='IDAHO_EPSCOR/GRIDMET',
+            #meteorology_source_inst='NASA/NLDAS/FORA0125_H002',
+            #meteorology_source_daily='IDAHO_EPSCOR/GRIDMET',
             elev_source='USGS/SRTMGL1_003',
             ndvi_cold=5,
             ndvi_hot=10,
@@ -117,6 +117,8 @@ class Image():
             .cat(ee.String(scene_id.get(2)))
         )
 
+        self.proj =self.image.projection()
+
         # Build WRS2_TILE from the scene_id
         self._wrs2_tile = ee.String('p').cat(self._scene_id.slice(5, 8))\
             .cat('r').cat(self._scene_id.slice(8, 11))
@@ -130,8 +132,8 @@ class Image():
         self._doy = ee.Number(self._date.getRelative('day', 'year')).add(1).int()
 
         # Model input parameters
-        self._meteorology_source_inst = meteorology_source_inst
-        self._meteorology_source_daily = meteorology_source_daily
+        #self._meteorology_source_inst = meteorology_source_inst
+        #self._meteorology_source_daily = meteorology_source_daily
         self._elev_source = elev_source
         self._ndvi_cold = ndvi_cold
         self._ndvi_hot = ndvi_hot
@@ -182,16 +184,16 @@ class Image():
         try:
             self.cold_calibration_points = kwargs['cold_calibration_points']
         except:
-            self.cold_calibration_points = 10
+            self.cold_calibration_points = 1
         try:
             self.hot_calibration_points = kwargs['hot_calibration_points']
         except:
-            self.hot_calibration_points = 10
+            self.hot_calibration_points = 1
 
         try:
             self.max_iterations = kwargs['max_iterations']
         except:
-            self.max_iterations = 15
+            self.max_iterations = 10
 
     @classmethod
     def from_image_id(cls, image_id, **kwargs):
@@ -457,8 +459,9 @@ class Image():
             emissivity=self.emissivity,
             savi=self.savi,
             # lai=self.lai,
-            meteo_inst_source=self._meteorology_source_inst,
-            meteo_daily_source=self._meteorology_source_daily,
+            meteo_location = 'br',
+            #meteo_inst_source=self._meteorology_source_inst,
+            #meteo_daily_source=self._meteorology_source_daily,
             elev_product=self._elev_source,
             ndvi_cold=self._ndvi_cold,
             ndvi_hot=self._ndvi_hot,
@@ -468,6 +471,7 @@ class Image():
             geometry_image=self.geometry,
             proj=self.proj,
             coords=self.coords,
+            et_reference = self.et_reference,
             cold_calibration_points=self.cold_calibration_points,
             hot_calibration_points=self.hot_calibration_points,
             max_iterations=self.max_iterations,
@@ -505,7 +509,7 @@ class Image():
             )
             et_reference_img = ee.Image(et_reference_coll.first())
             if self.et_reference_resample in ['bilinear', 'bicubic']:
-                et_reference_img = et_reference_img.resample(self.et_reference_resample)
+                et_reference_img = et_reference_img.reproject(self.image.projection()).resample(self.et_reference_resample)
         else:
             raise ValueError(f'unsupported et_reference_source: {self.et_reference_source}')
 
@@ -517,7 +521,10 @@ class Image():
         #   input image.  Not all models may want this though.
         # Note, doing this will cause the reference ET to be cloud masked.
         # CGM - Should the output band name match the input ETr band name?
-        return self.ndvi.multiply(0).add(et_reference_img)\
+
+        # TODO:  - The mask based on ndvi is return no data for the etr (LL)
+        #return self.ndvi.multiply(0).add(et_reference_img)\
+        return et_reference_img\
             .rename(['et_reference']).set(self._properties)
 
     @lazy_property
