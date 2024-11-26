@@ -16,8 +16,8 @@ def et(
     albedo,
     emissivity,
     savi,
-    meteo_inst_source,
-    meteo_daily_source,
+    meteorology_source_inst,
+    meteorology_source_daily,
     elev_product,
     ndvi_cold,
     ndvi_hot,
@@ -50,9 +50,9 @@ def et(
         Broad-band surface emissivity.
     savi : ee.Image
         Soil-adjusted vegetation index.
-    meteo_inst_source : ee.ImageCollection
+    meteorology_source_inst : ee.ImageCollection
         Meteorological dataset [inst]
-    meteo_daily_source : ee.ImageCollection
+    meteorology_source_daily : ee.ImageCollection
         Meteorological dataset [daily]
     elev_product : ee.Image
     ndvi_cold : ee.Number, int
@@ -92,6 +92,21 @@ def et(
         https://doi.org/10.1016/j.isprsjprs.2021.05.018
 
     """
+    # print(
+    #     meteorology_source_inst,
+    #     meteorology_source_daily,
+    #     elev_product,
+    #     ndvi_cold,
+    #     ndvi_hot,
+    #     lst_cold,
+    #     lst_hot,
+    #     time_start,
+    #     proj,
+    #     coords,
+    #     cold_calibration_points,
+    #     hot_calibration_points,
+    #     max_iterations,
+    # )
     # Image properties
     date = ee.Date(time_start)
     # year = ee.Number(date.get('year'))
@@ -107,11 +122,28 @@ def et(
     p_hottest_Ts = ee.Number(lst_hot)
 
     # Meteorology parameters
-    tmin, tmax, tair, ux, rh, rso_inst, rso24h = meteorology(
-        time_start,
-        meteo_inst_source,
-        meteo_daily_source,
-    )
+    # BCCA: Separated meteorology funcitons for different datasets
+    # TODO: check how to add CIMIS data
+    if meteorology_source_inst == "NASA/NLDAS/FORA0125_H002" and meteorology_source_daily == "IDAHO_EPSCOR/GRIDMET":
+        tmin, tmax, tair, ux, rh, rso_inst, rso24h = meteorology_nldas_gridmet(
+            time_start,
+            meteorology_source_inst,
+            meteorology_source_daily,
+        )
+    elif (
+        meteorology_source_inst == "ECMWF/ERA5_LAND/HOURLY"
+        and meteorology_source_daily == "projects/openet/assets/meteorology/era5land/na/daily"
+        or meteorology_source_inst == "ECMWF/ERA5_LAND/HOURLY"
+        and meteorology_source_daily == "projects/openet/assets/meteorology/era5land/sa/daily"
+    ):
+
+        tmin, tmax, tair, ux, rh, rso_inst, rso24h = meteorology_era5land(
+            time_start,
+            meteorology_source_inst,
+            meteorology_source_daily,
+        )
+    else:
+        raise Exception("Error: wrong daily or instant met data source assigned.")
 
     # Elevation data
     dem_product = ee.Image(elev_product)
@@ -219,15 +251,15 @@ def et(
     return et_24hr
 
 
-def meteorology(time_start, meteo_inst_source, meteo_daily_source):
+def meteorology_nldas_gridmet(time_start, meteorology_source_inst, meteorology_source_daily):
     """
     Parameters
     ----------
     time_start : str
         Image property: time start of the image.
-    meteo_inst_source: ee.ImageCollection, str
+    meteorology_source_inst: ee.ImageCollection, str
         Instantaneous meteorological data.
-    meteo_daily_source :  ee.ImageCollection, str
+    meteorology_source_daily :  ee.ImageCollection, str
         Daily meteorological data.
 
     Returns
@@ -246,11 +278,11 @@ def meteorology(time_start, meteo_inst_source, meteo_daily_source):
     """
     time_start = ee.Number(time_start)
 
-    meteorology_daily = ee.ImageCollection(meteo_daily_source).filterDate(
+    meteorology_daily = ee.ImageCollection(meteorology_source_daily).filterDate(
         ee.Date(time_start).advance(-1, "day"), ee.Date(time_start)
     )
 
-    meteorology_inst_collection = ee.ImageCollection(meteo_inst_source)
+    meteorology_inst_collection = ee.ImageCollection(meteorology_source_inst)
 
     # Linear interpolation
     previous_time = time_start.subtract(2 * 60 * 60 * 1000)
@@ -335,6 +367,138 @@ def meteorology(time_start, meteo_inst_source, meteo_daily_source):
     esat = tair_c.expression("0.6108 * (exp((17.27 * T_air) / (T_air + 237.3)))", {"T_air": tair_c})
 
     # Relative humidity (%)  (FAO56 Eqn 10)
+    rh = ea.divide(esat).multiply(100).rename("RH")
+
+    # Resample
+    tmin = tmin.subtract(273.15).resample("bilinear")
+    tmax = tmax.subtract(273.15).resample("bilinear")
+    rso_inst = rso_inst.resample("bilinear")
+    tair_c = tair_c.resample("bilinear")
+    wind_med = wind_med.resample("bilinear")
+    rh = rh.resample("bilinear")
+    swdown24h = swdown24h.resample("bilinear")
+
+    return [tmin, tmax, tair_c, wind_med, rh, rso_inst, swdown24h]
+
+
+def meteorology_era5land(time_start, meteorology_source_inst, meteorology_source_daily):
+    """
+    Parameters
+    ----------
+    time_start : str
+        Image property: time start of the image.
+    meteorology_source_inst: ee.ImageCollection, str
+        Instantaneous meteorological data.
+    meteorology_source_daily :  ee.ImageCollection, str
+        Daily meteorological data.
+
+    Returns
+    -------
+    ee.Image
+
+    Notes
+    -----
+    Accepted collections:
+    Inst : ECMWF/ERA5_LAND/HOURLY
+    Daily : projects/openet/assets/meteorology/era5land/na/daily
+            projects/openet/assets/meteorology/era5land/sa/daily
+
+    References
+    ----------
+
+    """
+
+    time_start = ee.Number(time_start)
+
+    meteorology_daily = (
+        ee.ImageCollection(meteorology_source_daily)
+        .filterDate(ee.Date(time_start).advance(-1, "day"), ee.Date(time_start).advance(1, "day"))
+        .first()
+    )
+
+    meteorology_inst_collection = ee.ImageCollection(meteorology_source_inst)
+
+    # Linear interpolation
+    previous_time = time_start.subtract(1 * 60 * 60 * 1000)
+    next_time = time_start.add(1 * 60 * 60 * 1000)
+    previous_image = (
+        meteorology_inst_collection.filterDate(previous_time, time_start).limit(1, "system:time_start", False).first()
+    )
+    next_image = (
+        meteorology_inst_collection.filterDate(time_start, next_time).limit(1, "system:time_start", True).first()
+    )
+
+    image_previous_time = ee.Number(previous_image.get("system:time_start"))
+    image_next_time = ee.Number(next_image.get("system:time_start"))
+
+    delta_time = time_start.subtract(image_previous_time).divide(image_next_time.subtract(image_previous_time))
+
+    # Daily variables
+    # Incoming shorwave down (W m2)
+    swdown24h = meteorology_daily.select("surface_solar_radiation_downwards").divide(1 * 60 * 60 * 24)
+
+    tmin = meteorology_daily.select("temperature_2m_min").rename("tmin")
+    tmax = meteorology_daily.select("temperature_2m_max").rename("tmax")
+
+    # Instantaneous
+
+    rso_inst = (
+        ee.ImageCollection(meteorology_source_inst)
+        .filterDate(ee.Date(time_start), ee.Date(time_start).advance(1, "hour"))
+        .select("surface_solar_radiation_downwards_hourly")
+        .mean()
+        .divide(1 * 60 * 60)
+        .rename("rso_inst")
+    )
+
+    # Air temperature
+    tair_c = (
+        next_image.select("temperature_2m")
+        .subtract(previous_image.select("temperature_2m"))
+        .multiply(delta_time)
+        .add(previous_image.select("temperature_2m"))
+        .subtract(273.15)
+        .rename("tair")
+    )
+
+    # Wind speed [ m/s]
+    wind_u = (
+        next_image.select("u_component_of_wind_10m")
+        .subtract(previous_image.select("u_component_of_wind_10m"))
+        .multiply(delta_time)
+        .add(previous_image.select("u_component_of_wind_10m"))
+    )
+
+    wind_v = (
+        next_image.select("v_component_of_wind_10m")
+        .subtract(previous_image.select("v_component_of_wind_10m"))
+        .multiply(delta_time)
+        .add(previous_image.select("v_component_of_wind_10m"))
+    )
+
+    wind_med = wind_u.expression(
+        "sqrt(ux_u ** 2 + ux_v ** 2)",
+        {"ux_u": wind_u, "ux_v": wind_v},
+    ).rename("ux")
+
+    wind_med = wind_med.expression("ux * (4.87) / log(67.8 * z - 5.42)", {"ux": wind_med, "z": 10.0}).rename("ux")
+
+    # Dew point temperature [°K]
+    tdp = (
+        next_image.select("dewpoint_temperature_2m")
+        .subtract(previous_image.select("dewpoint_temperature_2m"))
+        .multiply(delta_time)
+        .add(previous_image.select("dewpoint_temperature_2m"))
+        .rename("tdp")
+    )
+
+    # Actual vapour pressure [kPa]
+    ea = tdp.expression("0.6108 * (exp((17.27 * T_air) / (T_air + 237.3)))", {"T_air": tdp.subtract(273.15)})
+
+    # SATURATED VAPOR PRESSURE [kPa]
+    esat = tair_c.expression("0.6108 * (exp((17.27 * T_air) / (T_air + 237.3)))", {"T_air": tair_c})
+
+    # RELATIVE HUMIDITY (%)
     rh = ea.divide(esat).multiply(100).rename("RH")
 
     # Resample
@@ -587,71 +751,69 @@ def lst_correction(time_start, lst, dem, tair, rh, sun_elevation, hour, minutes,
     return lst_dem.rename("lst_dem")
 
 
-# BCCA: not used anymore
+# # BCCA: not used anymore
+# def lc_mask(month, year, geometry_image, mask_img):
+#     """
+#     Filtering pre-candidates pixels using a Land cover mask.
 
+#     Parameters
+#     ----------
+#     month : ee.Number, int
+#         Month.
+#     year : ee.Number, int
+#         Year.
+#     geometry_image : ee.Geometry
+#         Landsat image geometry.
+#     mask_img : ee.Image
 
-def lc_mask(month, year, geometry_image, mask_img):
-    """
-    Filtering pre-candidates pixels using a Land cover mask.
+#     Returns
+#     -------
+#     ee.Image
 
-    Parameters
-    ----------
-    month : ee.Number, int
-        Month.
-    year : ee.Number, int
-        Year.
-    geometry_image : ee.Geometry
-        Landsat image geometry.
-    mask_img : ee.Image
+#     References
+#     ----------
+#     """
+#     # Conditions
+#     cdl_year_min = 2008
+#     cdl_year_max = 2021
 
-    Returns
-    -------
-    ee.Image
+#     year_condition = ee.Number(year).max(cdl_year_min).min(cdl_year_max)
 
-    References
-    ----------
-    """
-    # Conditions
-    cdl_year_min = 2008
-    cdl_year_max = 2021
+#     isWinter = ee.Number(month.eq(1).Or(month.eq(2)).Or(month.eq(3)).Or(month.eq(11)).Or(month.eq(12)))
 
-    year_condition = ee.Number(year).max(cdl_year_min).min(cdl_year_max)
+#     start = ee.Date.fromYMD(year_condition, 1, 1)
+#     end = ee.Date.fromYMD(year_condition, 12, 31)
 
-    isWinter = ee.Number(month.eq(1).Or(month.eq(2)).Or(month.eq(3)).Or(month.eq(11)).Or(month.eq(12)))
+#     # Select classification corresponding to the year of the imageq
+#     lc = ee.ImageCollection("USDA/NASS/CDL").select("cropland").filter(ee.Filter.date(start, end)).first()
 
-    start = ee.Date.fromYMD(year_condition, 1, 1)
-    end = ee.Date.fromYMD(year_condition, 12, 31)
+#     # Filter cropland classes 1
+#     crop1 = lc.updateMask(lc.lt(61))
+#     crop1 = crop1.where(crop1, 1).unmask(0)
 
-    # Select classification corresponding to the year of the imageq
-    lc = ee.ImageCollection("USDA/NASS/CDL").select("cropland").filter(ee.Filter.date(start, end)).first()
+#     # Filter cropland classes 2
+#     crop2 = lc.updateMask(lc.gte(196))
+#     crop2 = crop2.where(crop2, 1).unmask(0)
 
-    # Filter cropland classes 1
-    crop1 = lc.updateMask(lc.lt(61))
-    crop1 = crop1.where(crop1, 1).unmask(0)
+#     # Land cover mask - total croplands
+#     # CGM - Should probably rename to something different than the function name
+#     lc_mask = crop1.add(crop2)
 
-    # Filter cropland classes 2
-    crop2 = lc.updateMask(lc.gte(196))
-    crop2 = crop2.where(crop2, 1).unmask(0)
+#     lc_mask = lc_mask.updateMask(lc_mask.eq(1))
 
-    # Land cover mask - total croplands
-    # CGM - Should probably rename to something different than the function name
-    lc_mask = crop1.add(crop2)
+#     # Check if there are more than 3000 pixels in the land cover masks
+#     # otherwise land cover mask is not applied (return a full scene mask)
+#     count_land_cover_pixels = lc_mask.rename("land_cover_pixels").reduceRegion(
+#         reducer=ee.Reducer.count(), scale=30, geometry=geometry_image, maxPixels=10e14
+#     )
+#     n_count_lc = ee.Number(count_land_cover_pixels.get("land_cover_pixels"))
 
-    lc_mask = lc_mask.updateMask(lc_mask.eq(1))
+#     mask = ee.Algorithms.If(n_count_lc.gte(3000), lc_mask, mask_img)
 
-    # Check if there are more than 3000 pixels in the land cover masks
-    # otherwise land cover mask is not applied (return a full scene mask)
-    count_land_cover_pixels = lc_mask.rename("land_cover_pixels").reduceRegion(
-        reducer=ee.Reducer.count(), scale=30, geometry=geometry_image, maxPixels=10e14
-    )
-    n_count_lc = ee.Number(count_land_cover_pixels.get("land_cover_pixels"))
+#     mask = ee.Algorithms.If(isWinter.eq(1), mask_img, mask)
+#     # mask = landsat_image.select(0).updateMask(1)
 
-    mask = ee.Algorithms.If(n_count_lc.gte(3000), lc_mask, mask_img)
-
-    mask = ee.Algorithms.If(isWinter.eq(1), mask_img, mask)
-    # mask = landsat_image.select(0).updateMask(1)
-
-    return ee.Image(mask)
+#     return ee.Image(mask)
 
 
 def homogeneous_mask(ndvi, proj):
@@ -1193,17 +1355,21 @@ def fexp_hot_pixel(
         ee.Date(time_start).advance(-60, "days"), ee.Date(time_start)
     )
 
-    etr_60mm = gridmet.select("etr").sum()
-    precipt_60mm = gridmet.select("pr").sum()
-    ratio = precipt_60mm.divide(etr_60mm)
+    # etr_60mm = gridmet.select("etr").sum()
+    # precipt_60mm = gridmet.select("pr").sum()
+    # ratio = precipt_60mm.divide(etr_60mm)
 
-    # Temperature adjustment offset (Allen2013 Eqn 8)
-    Tfac = etr_60mm.expression("2.6 - 13 * ratio", {"ratio": ratio})
+    # # Temperature adjustment offset (Allen2013 Eqn 8)
+    # Tfac = etr_60mm.expression("2.6 - 13 * ratio", {"ratio": ratio})
 
-    Tfac = ee.Image(Tfac.where(ratio.gt(0.2), 0)).rename("Tfac")
+    # Tfac = ee.Image(Tfac.where(ratio.gt(0.2), 0)).rename("Tfac")
 
-    c_lst_hotpix = c_lst_hotpix.addBands(Tfac).select(
-        ["ndvi", "rn_inst", "g_inst", "lst", "lst_nw", "tair", "ux", "longitude", "latitude", "int", "Tfac"]
+    # c_lst_hotpix = c_lst_hotpix.addBands(Tfac).select(
+    #     ["ndvi", "rn_inst", "g_inst", "lst", "lst_nw", "tair", "ux", "longitude", "latitude", "int", "Tfac"]
+    # )
+
+    c_lst_hotpix = c_lst_hotpix.select(
+        ["ndvi", "rn_inst", "g_inst", "lst", "lst_nw", "tair", "ux", "longitude", "latitude", "int"]
     )
 
     sum_final_hot_pix = c_lst_hotpix.select("int").reduceRegion(
@@ -1320,7 +1486,7 @@ def sensible_heat_flux(
 
     """
     # number of iterations to correct for instability
-    iterations = ee.List.repeat(1, 15)
+    iterations = ee.List.repeat(1, max_iterations)
 
     # Vegetation height [m]
     n_veg_height = ee.Number(0.5)
@@ -1399,14 +1565,14 @@ def sensible_heat_flux(
         def map_hot(f_hot):
 
             f_hot = ee.Feature(f_hot)
-            n_Ts_hot = ee.Number(f_hot.get("lst_nw")).subtract(ee.Number(f_hot.get("Tfac")))
+            n_Ts_hot = ee.Number(f_hot.get("lst_nw"))  # .subtract(ee.Number(f_hot.get("Tfac")))
             n_Ts_true_hot = ee.Number(f_hot.get("lst"))
             n_G_hot = ee.Number(f_hot.get("g_inst"))
             n_Rn_hot = ee.Number(f_hot.get("rn_inst"))
             n_ux_hot = ee.Number(f_hot.get("ux"))
             n_Tair_hot = ee.Number(f_hot.get("tair")).add(273.15)
-            n_long_hot = ee.Number(f_hot.get("longitude"))
-            n_lat_hot = ee.Number(f_hot.get("latitude"))
+            # n_long_hot = ee.Number(f_hot.get("longitude"))
+            # n_lat_hot = ee.Number(f_hot.get("latitude"))
             # p_hot_pix = ee.Geometry.Point([n_long_hot, n_lat_hot])
 
             n_ro_hot = n_Ts_hot.multiply(-0.0046).add(2.5538)
