@@ -27,6 +27,7 @@ def et(
     geometry_image,
     proj,
     coords,
+    #et_reference,
     cold_calibration_points=10,
     hot_calibration_points=10,
     max_iterations=15,
@@ -723,7 +724,21 @@ def lst_correction(time_start, lst, dem, tair, rh, sun_elevation, hour, minutes,
     air_dens = lst.expression("(1000 * Pair) / (1.01 * LST * 287)", {"Pair": pres, "LST": lst})
 
     # Temperature lapse rate (0.0065)
-    temp_lapse_rate = ee.Number(0.0065)
+    temp_date = ee.Date.fromYMD(ee.Date(time_start).get('year'),\
+                      ee.Date(time_start).get('month'),\
+                      ee.Date(time_start).get('day')).advance(ee.Date(time_start)\
+                                                     .get('hour'), 'hour')\
+                                                     .millis()
+    image = ee.ImageCollection("NASA/GSFC/MERRA/slv/2").filter(ee.Filter.eq('system:time_start', temp_date)).first()
+    t2m = image.select('T2M')
+    t250 = image.select('T250')
+    h250 = image.select('H250')
+    h_aux = h250.subtract(2)
+    lapse_rate_image = image.expression('(t2-t1)/(h2)',{'t2':t250,'h2':h_aux,'t1':t2m}).rename('lapse_rate')
+    geometry = lst.geometry()
+    reduced = lapse_rate_image.reduceRegion(reducer=ee.Reducer.mean(), geometry=geometry, scale=55000, maxPixels=1e9)
+
+    temp_lapse_rate = ee.Number(reduced.getNumber('lapse_rate').abs())
 
     # Added temperature lapse rate
     temp_corr = lst.add(dem.select("elevation").multiply(temp_lapse_rate))
@@ -839,15 +854,43 @@ def homogeneous_mask(ndvi, proj):
 
     sd_ndvi = (
         ndvi.reduceNeighborhood(
-            reducer=ee.Reducer.stdDev(), kernel=ee.Kernel.square(radius=3, units="pixels"), skipMasked=False
+            reducer=ee.Reducer.stdDev(), kernel=ee.Kernel.square(radius=2, units="pixels"), skipMasked=False
         )
         .reproject(proj)
         .updateMask(1)
     )
 
-    sd_mask = sd_ndvi.updateMask(sd_ndvi.lte(0.15))
+    sd_mask = sd_ndvi.updateMask(sd_ndvi.lte(0.30))
 
     return ee.Image(sd_mask)
+
+def slope_mask(dem, proj):
+    """
+    GMRF
+    Applies a filter for slope values in the image, allowing only pixels from flat 
+    regions to be selected as endmembers
+
+    Parameters
+    ----------
+
+    dem : ee.Image
+        Digital Elevation Model (dem).
+    proj : ee.Dictionary
+        Landsat image projection.
+
+    Returns
+    -------
+    ee.Image
+    
+    References
+    ----------
+
+    """
+
+    dem_slope = ee.Terrain.slope(dem).divide(180).multiply(3.141592653589793).tan().multiply(100).reproject(proj)
+    slp_mask = dem_slope.updateMask(dem_slope.lte(10))
+
+    return ee.Image(slp_mask)
 
 
 def cold_pixel(
@@ -931,23 +974,26 @@ def cold_pixel(
 
     # Creates a homogeneous ndvi mask
     stdev_ndvi = homogeneous_mask(ndvi, proj)
+    slope_filter = slope_mask(dem, proj)
 
     images = pos_ndvi.addBands([ndvi, ndvi_neg, pos_ndvi, lst_neg, lst_nw, coords, dem.toFloat()])
 
     d_perc_top_NDVI = (
         images.select("ndvi_neg")
         .updateMask(stdev_ndvi)
+        .updateMask(slope_filter)        
         .reduceRegion(reducer=ee.Reducer.percentile([ndvi_cold]), geometry=geometry_image, scale=30, maxPixels=1e9)
         .combine(ee.Dictionary({"ndvi_neg": 100}), overwrite=False)
     )
 
     n_perc_top_NDVI = ee.Number(d_perc_top_NDVI.get("ndvi_neg"))
 
-    i_top_NDVI = images.updateMask(stdev_ndvi).updateMask(images.select("ndvi_neg").lte(n_perc_top_NDVI))
+    i_top_NDVI = images.updateMask(stdev_ndvi).updateMask(slope_filter).updateMask(images.select("ndvi_neg").lte(n_perc_top_NDVI))
 
     d_perc_low_LST = (
         i_top_NDVI.select("lst_nw")
         .updateMask(stdev_ndvi)
+        .updateMask(slope_filter)
         .reduceRegion(reducer=ee.Reducer.percentile([lst_cold]), geometry=geometry_image, scale=30, maxPixels=1e9)
         .combine(ee.Dictionary({"lst_nw": 350}), overwrite=False)
     )
@@ -1037,7 +1083,6 @@ def cold_pixel(
     #            overwrite=False)
 
     return fc_cold_pix
-
 
 def radiation_inst(dem, lst, emissivity, albedo, tair, rh, swdown_inst, sun_elevation, cos_terrain):
     """
@@ -1323,12 +1368,14 @@ def fexp_hot_pixel(
 
     # Create a homogeneous ndvi mask
     stdev_ndvi = homogeneous_mask(ndvi, proj)
+    slope_filter = slope_mask(dem, proj)
 
     images = pos_ndvi.addBands([ndvi, ndvi_neg, rn, g, pos_ndvi, lst_neg, lst_nw, lst, tair, ux, coords])
 
     d_perc_down_ndvi = (
         images.select("post_ndvi")
         .updateMask(stdev_ndvi)
+        .updateMask(slope_filter)
         .reduceRegion(reducer=ee.Reducer.percentile([ndvi_hot]), geometry=geometry_image, scale=30, maxPixels=1e9)
         .combine(ee.Dictionary({"post_ndvi": 100}), overwrite=False)
     )
@@ -1339,13 +1386,14 @@ def fexp_hot_pixel(
     d_perc_top_lst = (
         i_low_NDVI.select("lst_neg")
         .updateMask(stdev_ndvi)
+        .updateMask(slope_filter)
         .reduceRegion(reducer=ee.Reducer.percentile([lst_hot]), geometry=geometry_image, scale=30, maxPixels=1e9)
         .combine(ee.Dictionary({"lst_neg": 350}), overwrite=False)
     )
 
     n_perc_top_lst = ee.Number(d_perc_top_lst.get("lst_neg"))
 
-    i_top_LST = i_low_NDVI.updateMask(stdev_ndvi).updateMask(i_low_NDVI.select("lst_neg").lte(n_perc_top_lst))
+    i_top_LST = i_low_NDVI.updateMask(stdev_ndvi).updateMask(slope_filter).updateMask(i_low_NDVI.select("lst_neg").lte(n_perc_top_lst))
 
     c_lst_hot_int = i_top_LST.select("lst_nw").min(1).max(1).int().rename("int")
     c_lst_hotpix = i_top_LST.addBands(c_lst_hot_int)
@@ -1433,7 +1481,6 @@ def fexp_hot_pixel(
     #                           'rn': 0, 'g': 0, 'ndvi': 0, 'sum': 0}),
     #            overwrite=False)
     return fc_hot_pix
-
 
 def sensible_heat_flux(
     savi,
@@ -1878,14 +1925,18 @@ def daily_et(h_inst, g_inst, rn_inst, lst_dem, rad_24h):
     i_FE = h_inst.expression("i_lambda_ET / (i_Rn - i_G)", {"i_lambda_ET": le_inst, "i_Rn": rn_inst, "i_G": g_inst})
     i_FE = i_FE.clamp(0, 1)
 
+    # Caculating ET using Rn24h (LL)
     i_ET24h_calc = i_FE.expression(
         "(0.0864 * i_FE * Rn24hobs) / i_lambda", {"i_FE": i_FE, "i_lambda": i_lambda, "Rn24hobs": rad_24h}
     )
 
+    # Calculating ET using ETr
+    #i_ET24h_calc = i_FE.multiply(et_reference)
+
     # Filtering et values
     i_ET24h_calc = i_ET24h_calc.where(i_ET24h_calc.gte(-1).And(i_ET24h_calc.lt(0)), 0.01)
     i_ET24h_calc = i_ET24h_calc.updateMask(i_ET24h_calc.gte(0))
-    i_ET24h_calc = i_ET24h_calc.updateMask(i_ET24h_calc.lte(9))
+    #i_ET24h_calc = i_ET24h_calc.updateMask(i_ET24h_calc.lte(9)) # GMRF: Parece ter afetado muito o cálculo com ETr
 
     return i_ET24h_calc.rename("et")
 
