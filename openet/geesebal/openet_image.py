@@ -28,7 +28,7 @@ def lazy_property(fn):
 class Image:
     """Google Earth Engine SEBAL - GEESEBAL for Landsat image"""
 
-    _C2_LST_CORRECT = False  # Enable (True) C2 LST correction to recalculate LST
+    _C2_LST_CORRECT = True  # Enable (True) C2 LST correction to recalculate LST
 
     def __init__(
         self,
@@ -493,6 +493,7 @@ class Image:
             geometry_image=self.geometry,
             proj=self.proj,
             coords=self.coords,
+            #et_reference = self.et_reference,
             cold_calibration_points=self.cold_calibration_points,
             hot_calibration_points=self.hot_calibration_points,
             max_iterations=self.max_iterations,
@@ -530,7 +531,7 @@ class Image:
             )
             et_reference_img = ee.Image(et_reference_coll.first())
             if self.et_reference_resample in ["bilinear", "bicubic"]:
-                et_reference_img = et_reference_img.resample(self.et_reference_resample)
+                et_reference_img = et_reference_img.reproject(self.image.projection()).resample(self.et_reference_resample)
         else:
             raise ValueError(f"unsupported et_reference_source: {self.et_reference_source}")
 
@@ -542,8 +543,8 @@ class Image:
         #   input image.  Not all models may want this though.
         # Note, doing this will cause the reference ET to be cloud masked.
         # CGM - Should the output band name match the input ETr band name?
-        return self.ndvi.multiply(0).add(et_reference_img).rename(["et_reference"]).set(self._properties)
-
+        return et_reference_img.rename(['et_reference']).set(self._properties)
+    
     @lazy_property
     def et_fraction(self):
         """Fraction of reference ET (equivalent to the Kc)"""
