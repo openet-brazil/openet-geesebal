@@ -1936,7 +1936,7 @@ def daily_et(h_inst, g_inst, rn_inst, lst_dem, rad_24h):
     # Filtering et values
     i_ET24h_calc = i_ET24h_calc.where(i_ET24h_calc.gte(-1).And(i_ET24h_calc.lt(0)), 0.01)
     i_ET24h_calc = i_ET24h_calc.updateMask(i_ET24h_calc.gte(0))
-    #i_ET24h_calc = i_ET24h_calc.updateMask(i_ET24h_calc.lte(9)) # GMRF: Parece ter afetado muito o cálculo com ETr
+    i_ET24h_calc = i_ET24h_calc.updateMask(i_ET24h_calc.lte(9))
 
     return i_ET24h_calc.rename("et")
 
