@@ -28,9 +28,9 @@ def et(
     proj,
     coords,
     #et_reference,
-    cold_calibration_points=10,
-    hot_calibration_points=10,
-    max_iterations=15,
+    cold_calibration_points=1,
+    hot_calibration_points=1,
+    max_iterations=10,
 ):
     """
     Daily Evapotranspiration [mm day-1].
@@ -93,152 +93,92 @@ def et(
         https://doi.org/10.1016/j.isprsjprs.2021.05.018
 
     """
-    # print(
-    #     meteorology_source_inst,
-    #     meteorology_source_daily,
-    #     elev_product,
-    #     ndvi_cold,
-    #     ndvi_hot,
-    #     lst_cold,
-    #     lst_hot,
-    #     time_start,
-    #     proj,
-    #     coords,
-    #     cold_calibration_points,
-    #     hot_calibration_points,
-    #     max_iterations,
-    # )
+
     # Image properties
     date = ee.Date(time_start)
-    # year = ee.Number(date.get('year'))
-    # month = ee.Number(date.get('month'))
-    # day = ee.Number(date.get('day'))
     hour = ee.Number(date.get("hour"))
     minutes = ee.Number(date.get("minutes"))
 
     # Endmembers
-    p_top_NDVI = ee.Number(ndvi_cold)
-    p_coldest_Ts = ee.Number(lst_cold)
-    p_lowest_NDVI = ee.Number(ndvi_hot)
-    p_hottest_Ts = ee.Number(lst_hot)
+    top_ndvi = ee.Number(ndvi_cold)
+    coldest_lst = ee.Number(lst_cold)
+    lowest_ndvi = ee.Number(ndvi_hot)
+    hottest_lst = ee.Number(lst_hot)
 
-    # Meteorology parameters
-    # BCCA: Separated meteorology funcitons for different datasets
+    # Meteo source
     # TODO: check how to add CIMIS data
-    if meteorology_source_inst == "NASA/NLDAS/FORA0125_H002" and meteorology_source_daily == "IDAHO_EPSCOR/GRIDMET":
-        tmin, tmax, tair, ux, rh, rso_inst, rso24h = meteorology_nldas_gridmet(
+    if (meteorology_source_inst == "NASA/NLDAS/FORA0125_H002") and \
+                    (meteorology_source_daily == "IDAHO_EPSCOR/GRIDMET"):
+        tmin, tmax, tair, ux, rh, rso_inst, rso24h, tfac = meteorology_nldas_gridmet(
             time_start,
             meteorology_source_inst,
             meteorology_source_daily,
         )
-    elif (
-        meteorology_source_inst == "ECMWF/ERA5_LAND/HOURLY"
-        and meteorology_source_daily == "projects/openet/assets/meteorology/era5land/na/daily"
-        or meteorology_source_inst == "ECMWF/ERA5_LAND/HOURLY"
-        and meteorology_source_daily == "projects/openet/assets/meteorology/era5land/sa/daily"
-    ):
 
-        tmin, tmax, tair, ux, rh, rso_inst, rso24h = meteorology_era5land(
+    elif (meteorology_source_inst == "ECMWF/ERA5_LAND/HOURLY") and \
+            (meteorology_source_daily == "projects/openet/assets/meteorology/era5land/na/daily") or \
+                (meteorology_source_inst == "ECMWF/ERA5_LAND/HOURLY") and \
+                    (meteorology_source_daily == "projects/openet/assets/meteorology/era5land/sa/daily"):
+
+        tmin, tmax, tair, ux, rh, rso_inst, rso24h, tfac = meteorology_era5land(
             time_start,
             meteorology_source_inst,
             meteorology_source_daily,
         )
+
     else:
         raise Exception("Error: wrong daily or instant met data source assigned.")
 
-    # Elevation data
+    # Elevation data [m]
     dem_product = ee.Image(elev_product)
     elev = dem_product.select("elevation")
-    slope_aspect = ee.Terrain.products(elev)
 
-    # Sun elevation
+    # Sun elevation []
     sun_elevation = ee.Number(image.get("SUN_ELEVATION"))
 
     # Terrain cos
     cos_zn = cos_terrain(time_start, dem_product, hour, minutes, coords)
+
     # LL: iterative process or endmembers selections may return empty values
     # in this case, return an empty image instead of broken the code
     try:
-        # Air temperature correction
+        # Air temperature correction [K]
         tair_dem = tair_dem_correction(tmin, tmax, elev)
 
-        # Land surface temperature correction
-        lst_dem = lst_correction(time_start, lst, elev, tair_dem, rh, sun_elevation, hour, minutes, coords)
+        # Land surface temperature correction [K]
+        lst_dem = lst_correction(time_start, lst, elev, tair_dem, rh, sun_elevation,
+                                                 hour, minutes, coords, geometry_image)
 
-        # Instantaneous net radiation using reanalysis dataset
+        # Instantaneous net radiation using reanalysis dataset [W m-2]
         rad_inst = radiation_inst(elev, lst, emissivity, albedo, tair, rh, rso_inst, sun_elevation, cos_zn)
 
-        # Instantaneous soil heat flux (g)
+        # Instantaneous soil heat flux [W m-2]
         g_inst = soil_heat_flux(rad_inst, ndvi, albedo, lst_dem, ndwi)
 
-        # Daily ney radiation (rn)
+        # Daily ney radiation [W m-2]
         rad_24h = radiation_24h(time_start, tmax, tmin, elev, sun_elevation, cos_zn, rso24h)
 
         # Cold pixel for wet conditions repretation of the image
-        fc_cold_pixels = cold_pixel(
-            albedo,
-            ndvi,
-            ndwi,
-            lst_dem,
-            p_top_NDVI,
-            p_coldest_Ts,
-            geometry_image,
-            coords,
-            proj,
-            elev,
-            cold_calibration_points,
-        )
+        cold_pixels = cold_pixel(albedo, ndvi, ndwi, lst_dem, top_ndvi, coldest_lst,
+                                        geometry_image, coords, proj, elev, cold_calibration_points)
 
         # Hot pixel
-        fc_hot_pixels = fexp_hot_pixel(
-            time_start,
-            albedo,
-            ndvi,
-            ndwi,
-            lst,
-            lst_dem,
-            rad_inst,
-            g_inst,
-            tair,
-            ux,
-            p_lowest_NDVI,
-            p_hottest_Ts,
-            geometry_image,
-            coords,
-            proj,
-            elev,
-            hot_calibration_points,
-        )
+        hot_pixels = fexp_hot_pixel(time_start, albedo, ndvi, ndwi, lst,lst_dem, rad_inst,
+                                        g_inst, tair, ux, lowest_ndvi, hottest_lst, geometry_image,
+                                            coords, proj, elev, tfac, hot_calibration_points)
 
-        # print(fc_cold_pixels.size().getInfo(), fc_hot_pixels.size().getInfo())
+        # Instantaneous sensible heat flux [W m-2]
+        h_inst = sensible_heat_flux(savi, ux, cold_pixels, hot_pixels, lst_dem, lst,
+                                        elev, geometry_image, max_iterations)
+        
+        # Checking if H was estimated, otherwise return a nodata mask
+        h_cond = ee.Number(cold_pixels.size()).eq(0).Or(ee.Number(hot_pixels.size()).eq(0))
 
-        # Instantaneous sensible heat flux (h)
-        h_inst = ee.Image(
-            ee.Algorithms.If(
-                ee.Number(fc_cold_pixels.size()).eq(0).Or(ee.Number(fc_hot_pixels.size()).eq(0)),
-                ee.Image.constant(0).updateMask(0).rename("h_inst"),
-                sensible_heat_flux(
-                    savi,
-                    ux,
-                    fc_cold_pixels,
-                    fc_hot_pixels,
-                    lst_dem,
-                    lst,
-                    elev,
-                    geometry_image,
-                    max_iterations,
-                ),
-            )
-        )
+        h_inst = ee.Image(ee.Algorithms.If(h_cond,
+                                           ee.Image.constant(0).updateMask(0),
+                                           h_inst)).rename("h_inst")
 
-        # BCCA - keeping this for debugging
-
-        # h_inst = sensible_heat_flux(
-        #     savi, ux, fc_cold_pixels, fc_hot_pixels, lst_dem, lst, elev, geometry_image,
-        #     max_iterations,
-        # )
-
-        # Daily evapotranspiration (et)
+        # Daily evapotranspiration [mm day-1]
         et_24hr = daily_et(h_inst, g_inst, rad_inst, lst_dem, rad_24h)
 
     except Exception as e:
@@ -277,32 +217,40 @@ def meteorology_nldas_gridmet(time_start, meteorology_source_inst, meteorology_s
     ----------
 
     """
+    # Get date information
     time_start = ee.Number(time_start)
 
+    # Filtering Daily data
     meteorology_daily = ee.ImageCollection(meteorology_source_daily).filterDate(
         ee.Date(time_start).advance(-1, "day"), ee.Date(time_start)
     )
 
+    # Instantaneous data
     meteorology_inst_collection = ee.ImageCollection(meteorology_source_inst)
 
     # Linear interpolation
     previous_time = time_start.subtract(2 * 60 * 60 * 1000)
     next_time = time_start.add(2 * 60 * 60 * 1000)
+
     previous_image = (
         meteorology_inst_collection.filterDate(previous_time, time_start).limit(1, "system:time_start", False).first()
     )
+
     next_image = (
         meteorology_inst_collection.filterDate(time_start, next_time).limit(1, "system:time_start", True).first()
     )
+
     image_previous_time = ee.Number(previous_image.get("system:time_start"))
     image_next_time = ee.Number(next_image.get("system:time_start"))
     delta_time = time_start.subtract(image_previous_time).divide(image_next_time.subtract(image_previous_time))
 
-    # Daily variables
     # Incoming shorwave down [W m-2]
     swdown24h = meteorology_daily.select("srad").first().rename("short_wave_down")
 
+    # Minimum air tempreature [K]
     tmin = meteorology_daily.select("tmmn").first().rename("tmin")
+
+    # Maximum air temperature [K]
     tmax = meteorology_daily.select("tmmx").first().rename("tmax")
 
     # Instantaneous short wave radiation [W m-2]
@@ -370,6 +318,32 @@ def meteorology_nldas_gridmet(time_start, meteorology_source_inst, meteorology_s
     # Relative humidity (%)  (FAO56 Eqn 10)
     rh = ea.divide(esat).multiply(100).rename("RH")
 
+    # Surface temperature correction based on precipitation and reference ET
+
+    # Accumulation time period
+    accum_period = -60
+
+    # Accum meteo data 
+    gridmet_accum = ee.ImageCollection("IDAHO_EPSCOR/GRIDMET").filterDate(
+        ee.Date(time_start).advance(accum_period, "days"), ee.Date(time_start)
+    )
+
+    # Reference ET 
+    etr_accum = gridmet_accum.select("etr").sum()
+
+    # Precipitation
+    precipt_accum = gridmet_accum.select("pr").sum()
+
+    # Ratio between precipt/etr
+    ratio = precipt_accum.divide(etr_accum)
+
+    # Temperature adjustment offset (Allen2013 Eqn 8)
+    
+    tfac = etr_accum.expression("2.6 - 13 * ratio", {"ratio": ratio})
+
+    tfac = ee.Image(tfac.where(ratio.gt(0.2), 0)).rename("tfac")
+
+
     # Resample
     tmin = tmin.subtract(273.15).resample("bilinear")
     tmax = tmax.subtract(273.15).resample("bilinear")
@@ -379,7 +353,7 @@ def meteorology_nldas_gridmet(time_start, meteorology_source_inst, meteorology_s
     rh = rh.resample("bilinear")
     swdown24h = swdown24h.resample("bilinear")
 
-    return [tmin, tmax, tair_c, wind_med, rh, rso_inst, swdown24h]
+    return [tmin, tmax, tair_c, wind_med, rh, rso_inst, swdown24h, tfac]
 
 
 def meteorology_era5land(time_start, meteorology_source_inst, meteorology_source_daily):
@@ -409,22 +383,27 @@ def meteorology_era5land(time_start, meteorology_source_inst, meteorology_source
 
     """
 
+    # Get date information
     time_start = ee.Number(time_start)
 
+    # Filtering Daily data
     meteorology_daily = (
         ee.ImageCollection(meteorology_source_daily)
         .filterDate(ee.Date(time_start).advance(-1, "day"), ee.Date(time_start).advance(1, "day"))
         .first()
     )
 
+    # Instantaneous data
     meteorology_inst_collection = ee.ImageCollection(meteorology_source_inst)
 
     # Linear interpolation
     previous_time = time_start.subtract(1 * 60 * 60 * 1000)
     next_time = time_start.add(1 * 60 * 60 * 1000)
+
     previous_image = (
         meteorology_inst_collection.filterDate(previous_time, time_start).limit(1, "system:time_start", False).first()
     )
+
     next_image = (
         meteorology_inst_collection.filterDate(time_start, next_time).limit(1, "system:time_start", True).first()
     )
@@ -434,15 +413,16 @@ def meteorology_era5land(time_start, meteorology_source_inst, meteorology_source
 
     delta_time = time_start.subtract(image_previous_time).divide(image_next_time.subtract(image_previous_time))
 
-    # Daily variables
-    # Incoming shorwave down (W m2)
+    # Incoming shorwave down [W m-2]
     swdown24h = meteorology_daily.select("surface_solar_radiation_downwards").divide(1 * 60 * 60 * 24)
 
+    # Minimum air temperature [K]
     tmin = meteorology_daily.select("temperature_2m_min").rename("tmin")
+    
+    # Maximum air temperature [K]
     tmax = meteorology_daily.select("temperature_2m_max").rename("tmax")
 
-    # Instantaneous
-
+    # Instantaneous incoming shortwave radiation [W m-2]
     rso_inst = (
         ee.ImageCollection(meteorology_source_inst)
         .filterDate(ee.Date(time_start), ee.Date(time_start).advance(1, "hour"))
@@ -452,7 +432,8 @@ def meteorology_era5land(time_start, meteorology_source_inst, meteorology_source
         .rename("rso_inst")
     )
 
-    # Air temperature
+    # Air temperature [C]
+    # TODO: LL- Change all temperatures to K ?
     tair_c = (
         next_image.select("temperature_2m")
         .subtract(previous_image.select("temperature_2m"))
@@ -502,6 +483,29 @@ def meteorology_era5land(time_start, meteorology_source_inst, meteorology_source
     # RELATIVE HUMIDITY (%)
     rh = ea.divide(esat).multiply(100).rename("RH")
 
+    # Accumulation time period
+    accum_period = -60
+
+    # Accum meteo data 
+    gridmet_accum = ee.ImageCollection(meteorology_source_daily).filterDate(
+        ee.Date(time_start).advance(accum_period, "days"), ee.Date(time_start)
+    )
+
+    # Reference ET 
+    etr_accum = gridmet_accum.select("etr_asce").sum()
+
+    # Precipitation
+    precipt_accum = gridmet_accum.select("total_precipitation").sum()
+
+    # Ratio between precipt/etr
+    ratio = precipt_accum.divide(etr_accum)
+
+    # Temperature adjustment offset (Allen2013 Eqn 8)
+    
+    tfac = etr_accum.expression("2.6 - 13 * ratio", {"ratio": ratio})
+
+    tfac = ee.Image(tfac.where(ratio.gt(0.2), 0)).rename("tfac")
+
     # Resample
     tmin = tmin.subtract(273.15).resample("bilinear")
     tmax = tmax.subtract(273.15).resample("bilinear")
@@ -511,7 +515,7 @@ def meteorology_era5land(time_start, meteorology_source_inst, meteorology_source
     rh = rh.resample("bilinear")
     swdown24h = swdown24h.resample("bilinear")
 
-    return [tmin, tmax, tair_c, wind_med, rh, rso_inst, swdown24h]
+    return [tmin, tmax, tair_c, wind_med, rh, rso_inst, swdown24h, tfac]
 
 
 def tao_sw(dem, tair, rh, sun_elevation, cos_zn):
@@ -551,9 +555,9 @@ def tao_sw(dem, tair, rh, sun_elevation, cos_zn):
     w = ea.expression("(0.14 * EA * PATM) + 2.1", {"PATM": pres, "EA": ea})
 
     # Solar zenith angle over a horizontal surface
-    solar_zenith = ee.Number(90).subtract(sun_elevation)
+    #solar_zenith = ee.Number(90).subtract(sun_elevation)
 
-    solar_zenith_radians = solar_zenith.multiply(DEG2RAD)
+    #solar_zenith_radians = solar_zenith.multiply(DEG2RAD)
     # Cos only in flat areas
     # cos_theta = solar_zenith_radians.cos()
 
@@ -668,7 +672,7 @@ def tair_dem_correction(tmin, tmax, dem):
     return tair_dem.rename("tair_dem")
 
 
-def lst_correction(time_start, lst, dem, tair, rh, sun_elevation, hour, minutes, coords):
+def lst_correction(time_start, lst, dem, tair, rh, sun_elevation, hour, minutes, coords, geometry_image):
     """
     Correct declivity and aspect effects from Land Surface Temperature.
 
@@ -703,7 +707,7 @@ def lst_correction(time_start, lst, dem, tair, rh, sun_elevation, hour, minutes,
 
     """
     # Solar constant [W m-2]
-    gsc = ee.Number(1367)
+    gsc = ee.Image.constant(1367)
 
     # Day of the year
     doy = ee.Date(time_start).getRelative("day", "year").add(1)
@@ -729,18 +733,29 @@ def lst_correction(time_start, lst, dem, tair, rh, sun_elevation, hour, minutes,
                       ee.Date(time_start).get('day')).advance(ee.Date(time_start)\
                                                      .get('hour'), 'hour')\
                                                      .millis()
+    
+    # Correcting lapse rate based on MERRA5 temperature profile
     image = ee.ImageCollection("NASA/GSFC/MERRA/slv/2").filter(ee.Filter.eq('system:time_start', temp_date)).first()
+    
+    # Air temperature at 2 meters [K]
     t2m = image.select('T2M')
-    t250 = image.select('T250')
-    h250 = image.select('H250')
-    h_aux = h250.subtract(2)
-    lapse_rate_image = image.expression('(t2-t1)/(h2)',{'t2':t250,'h2':h_aux,'t1':t2m}).rename('lapse_rate')
-    geometry = lst.geometry()
-    reduced = lapse_rate_image.reduceRegion(reducer=ee.Reducer.mean(), geometry=geometry, scale=55000, maxPixels=1e9)
 
+    # Air temperature at 250 hpa [k]
+    t250 = image.select('T250')
+
+    # Heigth at 250 hpa [m]
+    h250 = image.select('H250')
+
+    # Estimating lapse rate [K m-1]
+    lapse_rate_image = image.expression('(t2-t1)/(h2 - h1)',{'t2':t250,'h2':h250,'t1':t2m, 'h1': 2}).rename('lapse_rate')
+
+    # Get an average lapse rate for the scene
+    reduced = lapse_rate_image.reduceRegion(reducer=ee.Reducer.mean(), geometry=geometry_image, scale=55000, maxPixels=1e9)
+
+    # Temperature lapse rate [K m-1]
     temp_lapse_rate = ee.Number(reduced.getNumber('lapse_rate').abs())
 
-    # Added temperature lapse rate
+    # Correcting land surface temperature [K]
     temp_corr = lst.add(dem.select("elevation").multiply(temp_lapse_rate))
 
     cos_zn = cos_terrain(time_start, dem, hour, minutes, coords)
@@ -749,14 +764,11 @@ def lst_correction(time_start, lst, dem, tair, rh, sun_elevation, hour, minutes,
     tao_sw_img = tao_sw(dem, tair, rh, sun_elevation, cos_zn)
 
     # Corrected Land Surface temperature [K] (Zaafar and Farah (2020) Eqn 2)
-    # CGM - Simplified equation to pull "Gsc * dr * Transm_corr" out
     lst_dem = lst.expression(
-        "Temp_corr + Gsc * dr * Transm_corr * (cos_zn - cos_zenith_flat) / (air_dens * 1004 * 0.05)",
+        "Temp_corr + first_term * (cos_zn - cos_zenith_flat) / (air_dens * 1004 * 0.05)",
         {
             "Temp_corr": temp_corr,
-            "Gsc": gsc,
-            "dr": dr,
-            "Transm_corr": tao_sw_img,
+            "first_term": gsc.multiply(dr).multiply(tao_sw_img),
             "cos_zenith_flat": cos_theta,
             "cos_zn": cos_zn,
             "air_dens": air_dens,
@@ -764,72 +776,6 @@ def lst_correction(time_start, lst, dem, tair, rh, sun_elevation, hour, minutes,
     )
 
     return lst_dem.rename("lst_dem")
-
-
-# # BCCA: not used anymore
-# def lc_mask(month, year, geometry_image, mask_img):
-#     """
-#     Filtering pre-candidates pixels using a Land cover mask.
-
-#     Parameters
-#     ----------
-#     month : ee.Number, int
-#         Month.
-#     year : ee.Number, int
-#         Year.
-#     geometry_image : ee.Geometry
-#         Landsat image geometry.
-#     mask_img : ee.Image
-
-#     Returns
-#     -------
-#     ee.Image
-
-#     References
-#     ----------
-#     """
-#     # Conditions
-#     cdl_year_min = 2008
-#     cdl_year_max = 2021
-
-#     year_condition = ee.Number(year).max(cdl_year_min).min(cdl_year_max)
-
-#     isWinter = ee.Number(month.eq(1).Or(month.eq(2)).Or(month.eq(3)).Or(month.eq(11)).Or(month.eq(12)))
-
-#     start = ee.Date.fromYMD(year_condition, 1, 1)
-#     end = ee.Date.fromYMD(year_condition, 12, 31)
-
-#     # Select classification corresponding to the year of the imageq
-#     lc = ee.ImageCollection("USDA/NASS/CDL").select("cropland").filter(ee.Filter.date(start, end)).first()
-
-#     # Filter cropland classes 1
-#     crop1 = lc.updateMask(lc.lt(61))
-#     crop1 = crop1.where(crop1, 1).unmask(0)
-
-#     # Filter cropland classes 2
-#     crop2 = lc.updateMask(lc.gte(196))
-#     crop2 = crop2.where(crop2, 1).unmask(0)
-
-#     # Land cover mask - total croplands
-#     # CGM - Should probably rename to something different than the function name
-#     lc_mask = crop1.add(crop2)
-
-#     lc_mask = lc_mask.updateMask(lc_mask.eq(1))
-
-#     # Check if there are more than 3000 pixels in the land cover masks
-#     # otherwise land cover mask is not applied (return a full scene mask)
-#     count_land_cover_pixels = lc_mask.rename("land_cover_pixels").reduceRegion(
-#         reducer=ee.Reducer.count(), scale=30, geometry=geometry_image, maxPixels=10e14
-#     )
-#     n_count_lc = ee.Number(count_land_cover_pixels.get("land_cover_pixels"))
-
-#     mask = ee.Algorithms.If(n_count_lc.gte(3000), lc_mask, mask_img)
-
-#     mask = ee.Algorithms.If(isWinter.eq(1), mask_img, mask)
-#     # mask = landsat_image.select(0).updateMask(1)
-
-#     return ee.Image(mask)
-
 
 def homogeneous_mask(ndvi, proj):
     """
@@ -887,7 +833,7 @@ def slope_mask(dem, proj):
 
     """
 
-    dem_slope = ee.Terrain.slope(dem).divide(180).multiply(3.141592653589793).tan().multiply(100).reproject(proj)
+    dem_slope = ee.Terrain.slope(dem).divide(180).multiply(math.pi).tan().multiply(100).reproject(proj)
     slp_mask = dem_slope.updateMask(dem_slope.lte(10))
 
     return ee.Image(slp_mask)
@@ -952,137 +898,110 @@ def cold_pixel(
 
     """
 
+    # Filtering only positive ndvi values
     pos_ndvi = ndvi.updateMask(ndvi.gte(0)).rename("post_ndvi")
 
-    # BCCA - removed prefilters to increase the number of scenes able to be run
-    # # Pre-filter
-    # # BCCA: changed pos_ndvi from gt(0) to gte(0.7) and added albedo filter
-    # pos_ndvi = ndvi.updateMask(ndvi.gte(0.7)).rename('post_ndvi')
-
-    # pos_ndvi = pos_ndvi.updateMask(albedo.lte(0.23))
-
-    # # BCCA: added texture threshold to avoid mountaineous areas
-    # texture = dem.glcmTexture(3).select('elevation_contrast').focalMax(3, 'circle')
-
-    # pos_ndvi = pos_ndvi.updateMask(texture.lte(10))
-
+    # Creating a negative ndvi raster for filtering
     ndvi_neg = pos_ndvi.multiply(-1).rename("ndvi_neg")
 
+    # Creating a negative lst raster for filtering
     lst_neg = lst_dem.multiply(-1).rename("lst_neg")
+
+    # Lst for non water pixels 
     # lst_nw = lst_dem.updateMask(ndwi.lte(0)).rename('lst_nw')
     lst_nw = lst_dem.rename("lst_nw")
 
-    # Creates a homogeneous ndvi mask
+    # Homogenetou mask for ndvi
     stdev_ndvi = homogeneous_mask(ndvi, proj)
+
+    # Slope filter to avoid mountainous areas
     slope_filter = slope_mask(dem, proj)
 
+    # Creating a raster with all the parameters
     images = pos_ndvi.addBands([ndvi, ndvi_neg, pos_ndvi, lst_neg, lst_nw, coords, dem.toFloat()])
 
-    d_perc_top_NDVI = (
-        images.select("ndvi_neg")
+    # Estimating ndvi percentile [coldest]
+    perc_top_ndvi = (images.select("ndvi_neg")
         .updateMask(stdev_ndvi)
         .updateMask(slope_filter)        
         .reduceRegion(reducer=ee.Reducer.percentile([ndvi_cold]), geometry=geometry_image, scale=30, maxPixels=1e9)
         .combine(ee.Dictionary({"ndvi_neg": 100}), overwrite=False)
     )
 
-    n_perc_top_NDVI = ee.Number(d_perc_top_NDVI.get("ndvi_neg"))
+    # Get top ndvi value
+    perc_top_ndvi_value = ee.Number(perc_top_ndvi.get("ndvi_neg"))
 
-    i_top_NDVI = images.updateMask(stdev_ndvi).updateMask(slope_filter).updateMask(images.select("ndvi_neg").lte(n_perc_top_NDVI))
-
-    d_perc_low_LST = (
-        i_top_NDVI.select("lst_nw")
+    # Filtering ndvi raster with the percecilte
+    top_ndvi = images.updateMask(stdev_ndvi)\
+                        .updateMask(slope_filter)\
+                        .updateMask(images.select("ndvi_neg").lte(perc_top_ndvi_value))
+    
+    # Filtering lst
+    perc_low_lst = (
+        top_ndvi.select("lst_nw")
         .updateMask(stdev_ndvi)
         .updateMask(slope_filter)
         .reduceRegion(reducer=ee.Reducer.percentile([lst_cold]), geometry=geometry_image, scale=30, maxPixels=1e9)
         .combine(ee.Dictionary({"lst_nw": 350}), overwrite=False)
     )
 
-    n_perc_low_LST = ee.Number(d_perc_low_LST.get("lst_nw"))
+    # Get low lst value
+    perc_low_lst_value = ee.Number(perc_low_lst.get("lst_nw"))
 
-    i_cold_lst = i_top_NDVI.updateMask(i_top_NDVI.select("lst_nw").lte(n_perc_low_LST))
+    # Filtering lst raster with the percentile
+    coldest_lst = top_ndvi.updateMask(top_ndvi.select("lst_nw").lte(perc_low_lst_value))
 
-    # BCCA removed water surface
-    # # BCCA: included water surface as potential cold endmembers
-    # water_mask = (
-    #     ndvi.updateMask(ndvi.lt(0))
-    #     .updateMask(albedo.lte(0.15))
-    #     .updateMask(ndwi.gt(0))
-    #     .mask()
-    # )
+    # Creating a mask
+    masks = coldest_lst.select("lst_nw").mask().selfMask()
 
-    # buffer = water_mask.focal_min(radius=60, units='meters')
+    # Masking inputs
+    coldest_lst = images.updateMask(masks)
 
-    # water_mask = water_mask.updateMask(buffer)
+    # Removing lst bias values (low than 200K)
+    lst_cold_perc = coldest_lst.updateMask(coldest_lst.select("lst_nw").gte(200))
 
-    # masks = i_cold_lst.select('lst_nw').blend(water_mask).mask().selfMask()
-    masks = i_cold_lst.select("lst_nw").mask().selfMask()
+    # Creating a int raster
+    lst_cold_perc_int = masks.int().rename("int")
+    # lst_cold_perc_int = lst_cold_perc.select('lst_nw').min(1).max(1).int().rename('int')
 
-    i_cold_lst = images.updateMask(masks)
-
-    # Filters
-    c_lst_cold20 = i_cold_lst.updateMask(i_cold_lst.select("lst_nw").gte(200))
-    c_lst_cold20_int = masks.int().rename("int")
-    # c_lst_cold20_int = c_lst_cold20.select('lst_nw').min(1).max(1).int().rename('int')
-    c_lst_cold20 = c_lst_cold20.addBands(c_lst_cold20_int).select(
+    lst_coldest_pixels = lst_cold_perc.addBands(lst_cold_perc_int).select(
         "ndvi", "lst_nw", "longitude", "latitude", "elevation", "int"
     )
 
-    sum_final_cold_pix = c_lst_cold20.select("int").reduceRegion(
+    # Getting the number of pixels found
+    sum_final_cold_pix = lst_coldest_pixels.select("int").reduceRegion(
         reducer=ee.Reducer.sum(), geometry=geometry_image, scale=30, maxPixels=1e9
     )
-    n_sum_final_cold_pix = ee.Number(sum_final_cold_pix.get("int"))
-    # print(n_sum_final_cold_pix.getInfo())
+
+    sum_final_cold_pix_value = ee.Number(sum_final_cold_pix.get("int"))
 
     # CGM - Not used anymore
     # def function_def_pixel(f):
     #     return f.setGeometry(ee.Geometry.Point([f.get('longitude'), f.get('latitude')]))
 
-    # Get Cold Pixels (random)
-    fc_cold_pix = ee.FeatureCollection(
-        ee.Algorithms.If(
-            n_sum_final_cold_pix.gte(3000),
-            c_lst_cold20.stratifiedSample(
+    # Creating a table with the cold pixels identified in the processed
+    cold_pixels_table = lst_coldest_pixels.stratifiedSample(
                 numPoints=calibration_points,
                 classBand="int",
                 region=geometry_image,
                 scale=30,
                 dropNulls=True,
                 geometries=True,
-            ),  # .map(function_def_pixel),
-            ee.FeatureCollection(
-                [
-                    # ee.Feature(ee.Geometry.Point([0, 0]),
-                    #         {'ndvi': 0,
-                    #         'lst_nw': 0,
-                    #          'longitude': 0,
-                    #          'latitude': 0,
-                    #          'elevation': 0,
-                    #          'int': 1})
-                ]
-            ),
-        )
+            )
+
+    # Checkin if there are at least 1 pixel found as cold pixel
+    minimum_cold_pixels = 1 #3000
+
+    cold_pixels_table = ee.FeatureCollection(ee.Algorithms.If(
+            sum_final_cold_pix_value.gte(minimum_cold_pixels), 
+            cold_pixels_table, 
+            ee.FeatureCollection([ee.Feature(ee.Geometry.Point([0, 0]),
+                    {'ndvi': 0,'lst_nw': 0,'longitude': 0,
+                     'latitude': 0, 'elevation': 0,'int': 1})])
+                     )
     )
-    # fc_cold_pix = fc_cold_pix.merge(fc_nullFeature)
-
-    # n_Ts_cold = ee.Number(fc_cold_pix.aggregate_first('lst_nw'))
-    # n_long_cold = ee.Number(fc_cold_pix.aggregate_first('longitude'))
-    # n_lat_cold = ee.Number(fc_cold_pix.aggregate_first('latitude'))
-    # n_ndvi_cold = ee.Number(fc_cold_pix.aggregate_first('ndvi'))
-    # n_dem_cold = ee.Number(fc_cold_pix.aggregate_first('elevation'))
-
-    # # Dictionary
-    # d_cold_pixel = ee.Dictionary({
-    #     'temp': n_Ts_cold,
-    #     'ndvi': n_ndvi_cold,
-    #     'x': n_long_cold,
-    #     'y': n_lat_cold,
-    #     'sum': n_sum_final_cold_pix,
-    #     'elev': n_dem_cold
-    # }).combine(ee.Dictionary({'temp': 0, 'ndvi': 0, 'x': 0, 'y': 0, 'sum': 0, 'elev': 0}),
-    #            overwrite=False)
-
-    return fc_cold_pix
+    
+    return cold_pixels_table
 
 def radiation_inst(dem, lst, emissivity, albedo, tair, rh, swdown_inst, sun_elevation, cos_terrain):
     """
@@ -1118,23 +1037,29 @@ def radiation_inst(dem, lst, emissivity, albedo, tair, rh, swdown_inst, sun_elev
 
     """
 
+    # Up long wave radiation [W m-2]
     rad_long_up = lst.expression("emi * 5.67e-8 * (lst ** 4)", {"emi": emissivity, "lst": lst})
 
+    # Transmissivity 
     tao_sw_img = tao_sw(dem, tair, rh, sun_elevation, cos_terrain)
 
     log_taosw = tao_sw_img.log()
 
+    # Down long wave radiation [W m-2] 
     rad_long_down = lst.expression(
         "(0.85 * (- log_taosw) ** 0.09) * 5.67e-8 * (n_Ts_cold ** 4)",
         {"log_taosw": log_taosw, "n_Ts_cold": tair.add(273.15)},
     )
 
-    # Rso inst aspect/slope
+    # Solar zenith
     solar_zenith = ee.Number(90).subtract(sun_elevation)
     solar_zenith_radians = solar_zenith.multiply(DEG2RAD)
     cos_zeni = solar_zenith_radians.cos()
+
+    # Obtaining a Short down wave radiation correcting mountainous effect 
     swdown_inst_dem = swdown_inst.multiply(cos_terrain.divide(cos_zeni))
 
+    # Net radiation [W m-2]
     rn_inst = lst.expression(
         "((1 - alfa) * Rs_down) + Rl_down - Rl_up - ((1 - e_0) * Rl_down)",
         {
@@ -1175,11 +1100,13 @@ def soil_heat_flux(rn, ndvi, albedo, lst_dem, ndwi):
 
     """
 
+    # Soil heat flux [W m-2]
     g = rn.expression(
         "rn * (lst - 273.15) * (0.0038 + (0.0074 * albedo)) * (1 - 0.98 * (ndvi ** 4))",
         {"rn": rn, "ndvi": ndvi, "albedo": albedo, "lst": lst_dem},
     )
 
+    # Considering G as 50% of net radiation for water bodies
     g = g.where(ndwi.gt(0), rn.multiply(0.5))
 
     return g.rename("g_inst")
@@ -1291,6 +1218,7 @@ def fexp_hot_pixel(
     coords,
     proj,
     dem,
+    tfac,
     calibration_points=10,
 ):
     """
@@ -1345,142 +1273,98 @@ def fexp_hot_pixel(
         JAWRA J. Am. Water Resour. Assoc. 49, 563–576.
     ..
     """
-
+    # Filtering only positive ndvi values
     pos_ndvi = ndvi.updateMask(ndvi.gt(0)).rename("post_ndvi")
 
-    # BCCA -  commented prefilters to increase the number of images able to be run
-
-    # # Pre-filter
-    # # BCCA - restricted ndvi values and added albedo filter
-    # pos_ndvi = ndvi.updateMask(ndvi.gt(0)).updateMask(ndvi.lte(0.3)).rename('post_ndvi')
-
-    # pos_ndvi = pos_ndvi.updateMask(albedo.gte(0.15)).updateMask(albedo.lte(0.35))
-
-    # # BCCA - added texture threshold to avoid mountaineous areas
-    # texture = dem.glcmTexture(3).select('elevation_contrast').focalMax(3, 'circle')
-
-    # pos_ndvi = pos_ndvi.updateMask(texture.lte(10))
-
+    # Creating a negative ndvi raster for filtering
     ndvi_neg = pos_ndvi.multiply(-1).rename("ndvi_neg")
-
+    
+    # Creating a negative lst raster for filtering
     lst_neg = lst_dem.multiply(-1).rename("lst_neg")
+    
+    # Lst for non water pixels 
     lst_nw = lst_dem.updateMask(ndwi.lte(0)).rename("lst_nw")
 
-    # Create a homogeneous ndvi mask
+    # Homogenetou mask for ndvi
     stdev_ndvi = homogeneous_mask(ndvi, proj)
+
+    # Slope filter to avoid mountainous areas
     slope_filter = slope_mask(dem, proj)
 
-    images = pos_ndvi.addBands([ndvi, ndvi_neg, rn, g, pos_ndvi, lst_neg, lst_nw, lst, tair, ux, coords])
-
-    d_perc_down_ndvi = (
+    # Creating a raster with all the parameters
+    images = pos_ndvi.addBands([ndvi, ndvi_neg, rn, g, pos_ndvi,
+                                    lst_neg, lst_nw, lst, tair, ux, coords])
+    
+    # Estimating ndvi percentile [hottest]
+    perc_low_ndvi = (
         images.select("post_ndvi")
         .updateMask(stdev_ndvi)
         .updateMask(slope_filter)
         .reduceRegion(reducer=ee.Reducer.percentile([ndvi_hot]), geometry=geometry_image, scale=30, maxPixels=1e9)
         .combine(ee.Dictionary({"post_ndvi": 100}), overwrite=False)
     )
-    n_perc_low_NDVI = ee.Number(d_perc_down_ndvi.get("post_ndvi"))
 
-    i_low_NDVI = images.updateMask(images.select("post_ndvi").lte(n_perc_low_NDVI))
+    # Get top ndvi value
+    perc_low_ndvi_value = ee.Number(perc_low_ndvi.get("post_ndvi"))
 
-    d_perc_top_lst = (
-        i_low_NDVI.select("lst_neg")
+    # Filtering ndvi raster with the percecilte
+    low_ndvi = images.updateMask(images.select("post_ndvi").lte(perc_low_ndvi_value))
+
+    # Estimating lst percentile [hottest]
+    perc_top_lst = (
+        low_ndvi.select("lst_neg")
         .updateMask(stdev_ndvi)
         .updateMask(slope_filter)
         .reduceRegion(reducer=ee.Reducer.percentile([lst_hot]), geometry=geometry_image, scale=30, maxPixels=1e9)
         .combine(ee.Dictionary({"lst_neg": 350}), overwrite=False)
     )
 
-    n_perc_top_lst = ee.Number(d_perc_top_lst.get("lst_neg"))
+    # Get low lst value
+    perc_top_lst_value = ee.Number(perc_top_lst.get("lst_neg"))
 
-    i_top_LST = i_low_NDVI.updateMask(stdev_ndvi).updateMask(slope_filter).updateMask(i_low_NDVI.select("lst_neg").lte(n_perc_top_lst))
+    # Filtering lst raster with the percecilte  
+    top_lst = low_ndvi.updateMask(stdev_ndvi)\
+                        .updateMask(slope_filter)\
+                        .updateMask(low_ndvi.select("lst_neg").lte(perc_top_lst_value))
 
-    c_lst_hot_int = i_top_LST.select("lst_nw").min(1).max(1).int().rename("int")
-    c_lst_hotpix = i_top_LST.addBands(c_lst_hot_int)
+    lst_hot_int = top_lst.select("lst_nw").min(1).max(1).int().rename("int")
+    lst_hotpix = top_lst.addBands(lst_hot_int)
 
-    # Precipitation product
-    gridmet = ee.ImageCollection("IDAHO_EPSCOR/GRIDMET").filterDate(
-        ee.Date(time_start).advance(-60, "days"), ee.Date(time_start)
-    )
-
-    # etr_60mm = gridmet.select("etr").sum()
-    # precipt_60mm = gridmet.select("pr").sum()
-    # ratio = precipt_60mm.divide(etr_60mm)
-
-    # # Temperature adjustment offset (Allen2013 Eqn 8)
-    # Tfac = etr_60mm.expression("2.6 - 13 * ratio", {"ratio": ratio})
-
-    # Tfac = ee.Image(Tfac.where(ratio.gt(0.2), 0)).rename("Tfac")
-
-    # c_lst_hotpix = c_lst_hotpix.addBands(Tfac).select(
-    #     ["ndvi", "rn_inst", "g_inst", "lst", "lst_nw", "tair", "ux", "longitude", "latitude", "int", "Tfac"]
-    # )
-
-    c_lst_hotpix = c_lst_hotpix.select(
+    lst_hotpix = lst_hotpix.select(
         ["ndvi", "rn_inst", "g_inst", "lst", "lst_nw", "tair", "ux", "longitude", "latitude", "int"]
     )
 
-    sum_final_hot_pix = c_lst_hotpix.select("int").reduceRegion(
+    sum_final_hot_pix = lst_hotpix.select("int").reduceRegion(
         reducer=ee.Reducer.sum(), geometry=geometry_image, scale=30, maxPixels=1e9
     )
-    n_sum_final_hot_pix = ee.Number(sum_final_hot_pix.get("int"))
-    # print(n_sum_final_hot_pix.getInfo())
+    sum_final_hot_pix_value = ee.Number(sum_final_hot_pix.get("int"))
 
     # CGM - Not used any more
     # def function_def_pixel(f):
     #     return f.setGeometry(ee.Geometry.Point([f.get('longitude'), f.get('latitude')]))
-
-    # Get Hot Pixels (random)
-    fc_hot_pix = ee.FeatureCollection(
-        ee.Algorithms.If(
-            n_sum_final_hot_pix.gt(3000),
-            c_lst_hotpix.stratifiedSample(
+    
+    # Creating a table with the cold pixels identified in the processed
+    hot_pixels_table = lst_hotpix.addBands(tfac).stratifiedSample(
                 numPoints=calibration_points,
                 classBand="int",
                 region=geometry_image,
                 scale=30,
                 dropNulls=True,
                 geometries=True,
-            ),  # .map(function_def_pixel),
-            ee.FeatureCollection(
-                [
-                    # ee.Feature(ee.Geometry.Point([0, 0]),
-                    #         {'ndvi': 0,
-                    #          'rn_inst': 0,
-                    #          'g_inst': 0,
-                    #          'lst_nw': 0,
-                    #          'longitude': 0,
-                    #          'latitude': 0,
-                    #          'Tfac': 1})
-                ]
-            ),
-        )
+            )
+    
+    # Checkin if there are at least 1 pixel found as cold pixel
+    minimum_cold_pixels = 1 #3000
+
+    hot_pixels_table = ee.FeatureCollection(
+        ee.Algorithms.If(sum_final_hot_pix_value.gt(minimum_cold_pixels),
+            hot_pixels_table, 
+            ee.FeatureCollection([ee.Feature(ee.Geometry.Point([0, 0]),
+                                             {'ndvi': 0,'rn_inst': 0, 'g_inst': 0,
+                                                    'lst_nw': 0, 'longitude': 0, 'latitude': 0, 'tfac':0})]))
     )
-
-    # fc_hot_pix = fc_hot_pix.merge(fc_nullFeature)
-
-    # n_Ts_hot = ee.Number(fc_hot_pix.aggregate_first('lst_nw'))
-    # n_long_hot = ee.Number(fc_hot_pix.aggregate_first('longitude'))
-    # n_lat_hot = ee.Number(fc_hot_pix.aggregate_first('latitude'))
-    # n_ndvi_hot = ee.Number(fc_hot_pix.aggregate_first('ndvi'))
-    # n_Rn_hot = ee.Number(fc_hot_pix.aggregate_first('rn_inst'))
-    # n_G_hot = ee.Number(fc_hot_pix.aggregate_first('g_inst'))
-    # n_Tfac = ee.Number(fc_hot_pix.aggregate_first('Tfac'))
-
-    # # Dictionary
-    # d_hot_pixel = ee.Dictionary({
-    #     'temp': n_Ts_hot,
-    #     'tfac': n_Tfac,
-    #     'x': n_long_hot,
-    #     'y': n_lat_hot,
-    #     'rn': n_Rn_hot,
-    #     'g': n_G_hot,
-    #     'ndvi': n_ndvi_hot,
-    #     'sum': n_sum_final_hot_pix,
-    # }).combine(ee.Dictionary({'temp': 0, 'tfac': 0, 'x': 0, 'y': 0,
-    #                           'rn': 0, 'g': 0, 'ndvi': 0, 'sum': 0}),
-    #            overwrite=False)
-    return fc_hot_pix
+    
+    return hot_pixels_table
 
 def sensible_heat_flux(
     savi,
@@ -1532,23 +1416,27 @@ def sensible_heat_flux(
         Advanced Training and Users Manual. 2002.
 
     """
-    # number of iterations to correct for instability
+    # Number of iterations to correct for instability
     iterations = ee.List.repeat(1, max_iterations)
 
     # Vegetation height [m]
-    n_veg_height = ee.Number(0.5)
+    veg_height = ee.Image.constant(0.5).float()
 
     # Wind speed height [m]
-    n_zx = ee.Number(2)
+    zx = ee.Image.constant(2).float()
 
     # Blending height [m]
-    n_height = ee.Number(200)
+    blending_height = ee.Image.constant(200).float()
 
     # Air specific heat [J kg-1 K-1]
-    n_Cp = ee.Number(1004)
+    cp = ee.Image.constant(1004).float()
 
     # Von Karman’s constant
-    n_K = ee.Number(0.41)
+    k_constant = ee.Image.constant(0.41).float()
+
+    # Heights [m] above the zero plane displacement.
+    z1 = ee.Image.constant(0.01).float()
+    z2 = ee.Image.constant(2).float()
 
     # Filtering low lalues of wind speed
     wind_speed_std = (
@@ -1557,331 +1445,351 @@ def sensible_heat_flux(
         .combine(ee.Dictionary({"ux": 0}), overwrite=False)
     )
 
-    n_wind_speed_std = ee.Number(wind_speed_std.get("ux"))
+    wind_speed_std_value = ee.Number(wind_speed_std.get("ux"))
 
     # LL : Values less than 1.5 m s-1 tend to generate instability in
     # the iterative process to estimate aerodynamic resistance.
     # Standard Deviation is added in this situations.
-
-    ux = ux.where(ux.lt(1.5), ux.add(n_wind_speed_std))
+    ux = ux.where(ux.lt(1.5), ux.add(wind_speed_std_value))
 
     # Slope/ Aspect
     slope_aspect = ee.Terrain.products(dem)
 
     # Momentum roughness length at the weather station. (Allen2002 Eqn 28)
-    n_zom = n_veg_height.multiply(0.123)
+    zom_first_approach = veg_height.multiply(0.123)
 
     # Friction velocity at the weather station. (Allen2002 Eqn 37)
-    i_ufric_ws = lst.expression("(n_K * ux) / log(n_zx / n_zom)", {"n_K": n_K, "n_zx": n_zx, "n_zom": n_zom, "ux": ux})
+    # TODO: LL - We need to change this approach
+    ustar_station = lst.expression("(k_constant * ux) / log(zx / zom)", {
+                "k_constant": k_constant, "zx": zx, "zom": zom_first_approach, "ux": ux})
 
     # Wind speed at blending height at the weather station.  (Allen2002 Eqn 29)
-    i_u200 = lst.expression(
-        "i_ufric_ws * log(n_height / n_zom) / n_K",
-        {"i_ufric_ws": i_ufric_ws, "n_height": n_height, "n_zom": n_zom, "n_K": n_K},
-    )
+    u200 = lst.expression(
+        "ustar_station * log(blending_height / zom) / k_constant",{
+            "ustar_station": ustar_station, "blending_height": blending_height,
+                "zom": zom_first_approach, "k_constant": k_constant})
 
-    # # Momentum roughness length for each pixel.
-    # i_zom = lst.expression('exp((5.62 * SAVI) - 5.809)', {'SAVI': savi})
+    # Momentum roughness length for each pixel.
+    zom = lst.expression('exp((5.62 * savi) - 5.809)', {'savi': savi})
 
-    # # Momentum roughness slope/aspect Correction.  (Allen2002  A12 Eqn9)
-    # i_zom = i_zom.expression(
-    #     'zom * (1 + (slope - 5) / 20)',
-    #     {'zom': i_zom, 'slope': slope_aspect.select('slope')}
-    # )
+    # Momentum roughness slope/aspect Correction.  (Allen2002  A12 Eqn9)
+    zom = zom.expression(
+         'zom * (1 + (slope - 5) / 20)',
+         {'zom': zom, 'slope': slope_aspect.select('slope')}
+     )
 
-    # # Friction velocity for each pixel. (Allen2002 Eqn 30)
-    # i_ufric = lst.expression(
-    #     '(n_K * u200) / log(height / i_zom)',
-    #     {'u200': i_u200, 'height': n_height, 'i_zom': n_zom, 'n_K': n_K}
-    # ).rename('u_fr')
+    # Finding the a and b coefficients of  dt = a+bTs equation
+    def map_cold(cold):
+        
+        # Cold pixel variables
+        cold_pixel = ee.Feature(cold)
 
-    # Heights [m] above the zero plane displacement.
-    z1 = ee.Number(0.01)
-    z2 = ee.Number(2)
+        # Lst cold pixel value
+        ts_cold_pixel = ee.Image.constant(cold_pixel.get("lst_nw")).float()
 
-    # # Aerodynamic resistance to heat transport (Allen2002 Eqn 26)
-    # i_rah = i_ufric.expression(
-    #     '(log(z2 / z1)) / (i_ufric * 0.41)', {'z2': z2, 'z1': z1, 'i_ufric': i_ufric}
-    # ).rename(['rah'])
+        # Mapping hot pixels
+        def map_hot(hot):
 
-    def map_cold(f_cold):
+            # Hot pixel variables
+            hot_pixel = ee.Feature(hot)
 
-        f_cold = ee.Feature(f_cold)
-        n_Ts_cold = ee.Number(f_cold.get("lst_nw"))
+            # Lst hot pixel value
+            ts_hot_pixel = ee.Image.constant(hot_pixel.get("lst_nw")).subtract(ee.Image.constant(hot_pixel.get("tfac")))
+            #n_Ts_true_hot = ee.Number(hot_pixel.get("lst"))
 
-        def map_hot(f_hot):
+            # G inst hot pixel value
+            g_inst_hot = ee.Image.constant(hot_pixel.get("g_inst"))
 
-            f_hot = ee.Feature(f_hot)
-            n_Ts_hot = ee.Number(f_hot.get("lst_nw"))  # .subtract(ee.Number(f_hot.get("Tfac")))
-            n_Ts_true_hot = ee.Number(f_hot.get("lst"))
-            n_G_hot = ee.Number(f_hot.get("g_inst"))
-            n_Rn_hot = ee.Number(f_hot.get("rn_inst"))
-            n_ux_hot = ee.Number(f_hot.get("ux"))
-            n_Tair_hot = ee.Number(f_hot.get("tair")).add(273.15)
+            # Rn inst hot pixel value
+            rn_inst_hot = ee.Image.constant(hot_pixel.get("rn_inst"))
+
+            # Wind speed hot pixel value
+            ux_hot = ee.Image.constant(hot_pixel.get("ux"))
+
+            # Tair hot pixel value
+            tair_hot = ee.Image.constant(hot_pixel.get("tair")).add(273.15)
             # n_long_hot = ee.Number(f_hot.get("longitude"))
             # n_lat_hot = ee.Number(f_hot.get("latitude"))
             # p_hot_pix = ee.Geometry.Point([n_long_hot, n_lat_hot])
 
-            n_ro_hot = n_Ts_hot.multiply(-0.0046).add(2.5538)
+            # Density of the air [km m-2]
+            #ro_hot = ts_hot_pixel.multiply(-0.0046).add(2.5538)
 
-            # Iterative Process
             # Sensible heat flux at the hot pixel
-            n_H_hot = ee.Number(n_Rn_hot).subtract(ee.Number(n_G_hot))
+            h_inst_hot = rn_inst_hot.subtract(g_inst_hot)
 
-            n_zom_hot = n_zom
+            # Roughness at hot pixel []
+            # TODO:LL - Why not the zoom at the hot pixel?
+            zom_hot = zom_first_approach
 
-            n_ufric_hot = n_ux_hot.expression(
-                "(n_K * ux)/ log(n_zx /n_zom)", {"n_K": n_K, "n_zx": n_zx, "n_zom": n_zom_hot, "ux": n_ux_hot}
+            # Friction velocity at hot pixel [ ]
+            ustar_hot = ux_hot.expression(
+                "(k_constant * ux)/ log(zx /zom)", {
+                    "k_constant": k_constant,
+                    "zx": zx,
+                    "zom": zom_hot,
+                    "ux": ux_hot
+                }
             )
 
-            n_u200_hot = n_zom_hot.expression(
-                "i_ufric_ws *  (log(n_height/n_zom)/n_K)",
-                {"i_ufric_ws": n_ufric_hot, "n_height": n_height, "n_zom": n_zom_hot, "n_K": n_K},
-            )
-            n_u200_hot = n_u200_hot.max(ee.Number(4))
-
-            # Calculate H initial variables
-            n_ufric_hot = n_ux_hot.expression(
-                "(n_K * ux)/ log(n_zx /n_zom)", {"n_K": n_K, "n_zx": n_zx, "n_zom": n_zom_hot, "ux": n_ux_hot}
-            )
-
-            n_rah_hot = n_ufric_hot.expression(
-                "(log(z2/z1))/(i_ufric*0.41)", {"z2": z2, "z1": z1, "i_ufric": n_ufric_hot}
+            # Wind speed at blending height at 200 meters
+            u200_hot = zom_hot.expression(
+                "ustar_hot *  (log(blending_height/zom)/k_constant)",{
+                    "ustar_hot": ustar_hot,
+                    "blending_height": blending_height,
+                    "zom": zom_hot,
+                    "k_constant": k_constant
+                }
             )
 
-            n_ro_hot = (ee.Number(-0.0046).multiply(n_Tair_hot)).add(ee.Number(2.5538))
+            # Filtering minimum value 
+            u200_hot = u200_hot.max(4)
 
-            n_H_hot = ee.Number(n_Rn_hot).subtract(ee.Number(n_G_hot))
+            # Aerodynamic resistance at hot pixel [s m-1]
+            rah_hot = ustar_hot.expression(
+                "(log(z2/z1))/(ustar_hot*0.41)",{
+                    "z2": z2, "z1": z1, "ustar_hot": ustar_hot
+                }
+            )
 
+            # Density of the air [km m-2]
+            ro_hot = tair_hot.multiply(-0.0046).add(2.5538)
+            
             # First feature of iterative process
-
-            hot_pixel = ee.Feature(
-                f_hot.geometry(),
-                {
-                    "ufric": n_ufric_hot,
-                    "rah": n_rah_hot,
-                    # 'psi_m_200': 0,
-                    # 'psi_h_2': 0,
-                    # 'psi_h_01': 0,
-                },
-            )
+            hot_pixel = ee.Feature(hot_pixel.geometry(),{
+                "ustar": ustar_hot,"rah": rah_hot})
 
             # Iterative_process
             def iterative_hot(empty, old):
-
+                
                 feat = ee.Feature(old)
-                n_rah_hot = ee.Number(feat.get("rah")).max(0)
-                n_ufric_hot = ee.Number(feat.get("ufric")).max(0)
 
-                n_L_hot = ee.Number(
-                    n_ufric_hot.expression(
-                        "-(i_ro*n_Cp*(i_ufric**3)*i_lst)/(0.41*9.81*i_H)",
+                # Aerodynamic resistance at the hot pixel [s m-1]
+                rah_hot = ee.Image(feat.get("rah")).max(0)
+
+                # Friction velocity at hot pixel []
+                ustart_hot = ee.Image(feat.get("ustar")).max(0)
+
+                # Monin obukov length at the hot pixel [m]
+                l_hot = ustart_hot.expression(
+                        "-(ro_hot*cp*(ustar_hot**3)*ts_hot_pixel)/(0.41*9.81*h_inst_hot)",
                         {
-                            "i_ro": n_ro_hot,
-                            "n_Cp": n_Cp,
-                            "i_ufric": n_ufric_hot,
-                            "i_lst": n_Ts_true_hot,
-                            "i_H": n_H_hot,
+                            "ro_hot": ro_hot,
+                            "cp": cp,
+                            "ustar_hot": ustart_hot,
+                            "ts_hot_pixel": ts_hot_pixel,
+                            "h_inst_hot": h_inst_hot,
                         },
+                    
+                )
+
+                # Filtering minimum value 
+                l_hot = l_hot.max(-1000)
+
+                # Momentum and heat transport 
+                # Stable conditions (l > 0)
+                psim_200 = ee.Image(l_hot.expression("-5*(height/l_hot)", {"height": blending_height, "l_hot": l_hot}))
+                psih_2 = ee.Image(l_hot.expression("-5*(height/l_hot)", {"height": z2, "l_hot": l_hot}))
+                psih_01 = ee.Image(l_hot.expression("-5*(height/l_hot)", {"height": z1, "l_hot": l_hot}))
+
+                # MO variables
+                x200 = ee.Image(l_hot.expression("(1-(16*(height/l_hot)))**0.25", {"height": blending_height, "l_hot": l_hot}))
+                
+                x2 = ee.Image(l_hot.expression("(1-(16*(height/l_hot)))**0.25", {"height": z2, "l_hot": l_hot}))
+                x01 = ee.Image(l_hot.expression("(1-(16*(height/l_hot)))**0.25", {"height": z1, "l_hot": l_hot}))
+
+                psimu_200 = ee.Image(x200.expression(
+                        "2*log((1+x200)/2)+log((1+x200**2)/2)-2*atan(x200)+0.5*pi",
+                        {"x200": x200, "pi": ee.Number(math.pi)},
+                    ))
+                
+                psihu_2 = ee.Image(x2.expression("2*log((1+x2**2)/2)", {"x2": x2}))
+
+                psihu_01 = ee.Image(x01.expression("2*log((1+x01**2)/2)", {"x01": x01}))
+                
+                # Correcting atmospheric conditions
+                psim_200 = psim_200.where(l_hot.lt(0), psimu_200)
+                psim_200 = psim_200.where(l_hot.eq(0), 0)
+               
+                psih_2 = psih_2.where(l_hot.lt(0), psihu_2)
+                psih_2 = psih_2.where(l_hot.eq(0), 0)
+
+                psih_01 = psih_01.where(l_hot.lt(0), psihu_01)
+                psih_01 = psih_01.where(l_hot.eq(0), 0)
+
+                # Friction velocity at the hot pixel
+                ustar_hot = ee.Image(
+                    u200_hot.expression(
+                        "(u200*0.41)/(log(height/zom)-psim_200)",
+                        {"u200": u200_hot, "height": blending_height, "zom": zom_hot, "psim_200": psim_200},
                     )
-                )
+                )   
 
-                n_L_hot = n_L_hot.max(ee.Number(-1000))
+                # Filtering to avoid computing instability
+                ustar_hot = ustar_hot.max(0.02)
 
-                n_psim_200 = ee.Number(n_L_hot.expression("-5*(height/n_L)", {"height": n_height, "n_L": n_L_hot}))
-                n_psih_2 = ee.Number(n_L_hot.expression("-5*(height/n_L)", {"height": z2, "n_L": n_L_hot}))
-                n_psih_01 = ee.Number(n_L_hot.expression("-5*(height/n_L)", {"height": z1, "n_L": n_L_hot}))
-
-                n_x200 = ee.Number(
-                    n_L_hot.expression("(1-(16*(height/n_L)))**0.25", {"height": n_height, "n_L": n_L_hot})
-                )
-                n_x2 = ee.Number(n_L_hot.expression("(1-(16*(height/n_L)))**0.25", {"height": z2, "n_L": n_L_hot}))
-                n_x01 = ee.Number(n_L_hot.expression("(1-(16*(height/n_L)))**0.25", {"height": z1, "n_L": n_L_hot}))
-
-                n_psimu_200 = ee.Number(
-                    n_x200.expression(
-                        "2*log((1+n_x200)/2)+log((1+n_x200**2)/2)-2*atan(n_x200)+0.5*pi",
-                        {"n_x200": n_x200, "pi": ee.Number(math.pi)},
+                # Aerodynamic resistance to heat transport [s/m]
+                rah_hot = ustar_hot.expression(
+                        "(log(z2/z1)-psi_h2+psi_h01)/(ustar*0.41)",
+                        {"z2": z2, "z1": z1, "ustar": ustar_hot, "psi_h2": psih_2, "psi_h01": psih_01},
                     )
-                )
-                n_psihu_2 = ee.Number(n_x2.expression("2*log((1+n_x2**2)/2)", {"n_x2": n_x2}))
-                n_psihu_01 = ee.Number(n_x01.expression("2*log((1+n_x01**2)/2)", {"n_x01": n_x01}))
 
-                n_psim_200 = ee.Number(
-                    ee.Algorithms.If(
-                        n_L_hot.lt(0),
-                        n_psimu_200,  # Assign value if n_L_hot < 0
-                        ee.Algorithms.If(
-                            n_L_hot.eq(0),
-                            ee.Number(0),  # Assign value if n_L_hot == 0
-                            n_psim_200,  # Assign value if n_L_hot > 0
-                        ),
-                    )
-                )
-                n_psih_2 = ee.Number(
-                    ee.Algorithms.If(
-                        n_L_hot.lt(0),
-                        n_psihu_2,  # Assign value if n_L_hot < 0
-                        ee.Algorithms.If(
-                            n_L_hot.eq(0),
-                            ee.Number(0),  # Assign value if n_L_hot == 0
-                            n_psih_2,  # Assign value if n_L_hot > 0
-                        ),
-                    )
-                )
-                n_psih_01 = ee.Number(
-                    ee.Algorithms.If(
-                        n_L_hot.lt(0),
-                        n_psihu_01,  # Assign value if n_L_hot < 0
-                        ee.Algorithms.If(
-                            n_L_hot.eq(0),
-                            ee.Number(0),  # Assign value if n_L_hot == 0
-                            n_psih_01,  # Assign value if n_L_hot > 0
-                        ),
-                    )
-                )
-
-                n_ufric_hot = ee.Number(
-                    n_u200_hot.expression(
-                        "(u200*0.41)/(log(height/i_zom)-i_psim_200)",
-                        {"u200": n_u200_hot, "height": n_height, "i_zom": n_zom_hot, "i_psim_200": n_psim_200},
-                    )
-                )
-
-                n_ufric_hot = n_ufric_hot.max(ee.Number(0.02))
-
-                n_rah_hot = ee.Number(
-                    n_ufric_hot.expression(
-                        "(log(z2/z1)-psi_h2+psi_h01)/(i_ufric*0.41)",
-                        {"z2": z2, "z1": z1, "i_ufric": n_ufric_hot, "psi_h2": n_psih_2, "psi_h01": n_psih_01},
-                    )
-                )
-
-                return ee.Feature(
-                    hot_pixel.geometry(),
-                    {
-                        "ufric": n_ufric_hot,
-                        "rah": n_rah_hot,
-                        # 'psi_m_200': 0,
-                        # 'psi_h_2': 0,
-                        # 'psi_h_01': 0,
-                    },
-                )
+                return ee.Feature(hot_pixel.geometry(),{"ustar": ustar_hot,"rah": rah_hot})
 
             # Apply iterative function
-
             hot_pixel = ee.Feature(iterations.iterate(iterative_hot, hot_pixel))
 
-            n_rah_hot = ee.Number(hot_pixel.get("rah"))
-            n_dT_hot = (n_H_hot.multiply(n_rah_hot)).divide(n_ro_hot.multiply(n_Cp))
-            n_dT_cold = ee.Number(0)
-            n_coef_a = (n_dT_cold.subtract(n_dT_hot)).divide(n_Ts_cold.subtract(n_Ts_hot))
-            n_coef_b = n_dT_hot.subtract(n_coef_a.multiply(n_Ts_hot))
+            # Aerodynamic resistance to heat transport [s/m]
+            rah_hot = ee.Image(hot_pixel.get("rah"))
 
-            return ee.Feature(None, {"a": n_coef_a, "b": n_coef_b})
+            # Difference temperature at the hot pixel
+            dT_hot = (h_inst_hot.multiply(rah_hot)).divide(ro_hot.multiply(cp))
+
+            # Difference temperature at the cold pixel
+            dT_cold = ee.Image(0)
+
+            # Coef a
+            coef_a = (dT_cold.subtract(dT_hot)).divide(ts_cold_pixel.subtract(ts_hot_pixel))
+            coef_b = dT_hot.subtract(coef_a.multiply(ts_hot_pixel))
+
+            coef_b = coef_b.rename('b').reduceRegion(
+                reducer = ee.Reducer.mean(),
+                scale=10000,
+                geometry=lst.geometry()
+            ).getNumber('b')
+
+            coef_a = coef_a.rename('b').reduceRegion(
+                reducer = ee.Reducer.mean(),
+                scale=10000,
+                geometry=lst.geometry()
+            ).getNumber('b')
+
+            return ee.Feature(None, {"a": coef_a, "b": coef_b})
 
         return fc_hot_pixels.toList(100).map(map_hot)
 
-    dict_linear_coeffs = ee.FeatureCollection(fc_cold_pixels.toList(100).map(map_cold).flatten())
 
-    # print(dict_linear_coeffs)
+    # list length
+    list_length = 100
+
+    # Dictionary with the results
+    dict_linear_coeffs = ee.FeatureCollection(fc_cold_pixels.toList(list_length).map(map_cold).flatten())
+    
+    # Coefs lists
     coeff_a_list = dict_linear_coeffs.aggregate_array("a")
     coeff_b_list = dict_linear_coeffs.aggregate_array("b")
 
-    # print(coeff_a_list)
-    # print(coeff_b_list)
-    n_coef_a = ee.Number(coeff_a_list.reduce(ee.Reducer.median()))
-    # n_coef_a_std = coeff_a_list.reduce(ee.Reducer.stdDev());
 
-    n_coef_b = ee.Number(coeff_b_list.reduce(ee.Reducer.median()))
-    # n_coef_b_std = coeff_b_list.reduce(ee.Reducer.stdDev());
+    coeff_a_list = dict_linear_coeffs.aggregate_array("a")
+    coeff_b_list = dict_linear_coeffs.aggregate_array("b")
 
-    # print(n_coef_a, n_coef_b)
+    coef_a = ee.Image(coeff_a_list.reduce(ee.Reducer.median()))
+    coef_a = ee.List([coef_a,0]).reduce(ee.Reducer.firstNonNull())
+    coef_a = ee.Image.constant(coef_a).float()
 
-    i_dT = lst_dem.expression(
-        "(n_coef_a * i_lst_dem) + n_coef_b", {"n_coef_a": n_coef_a, "n_coef_b": n_coef_b, "i_lst_dem": lst_dem}
-    ).rename("dT")
+    coef_b = ee.Image(coeff_b_list.reduce(ee.Reducer.median()))
+    coef_b = ee.List([coef_b,0]).reduce(ee.Reducer.firstNonNull())
+    coef_b = ee.Image.constant(coef_b).float()
 
-    i_Ta = lst_dem.expression("i_lst - i_dT", {"i_lst": lst, "i_dT": i_dT})
+    # Surface Temperature difference [K]
+    dt = lst_dem.expression(
+        "(coef_a * lst_dem) + coef_b", {"coef_a": coef_a, "coef_b": coef_b, "lst_dem": lst_dem}
+    ).rename("dt")
 
-    i_ro = i_Ta.expression("(-0.0046 * i_Ta) + 2.5538", {"i_Ta": i_Ta}).rename("ro")
+    virtual_ta = lst_dem.expression("lst - dt", {"lst": lst, "dt": dt})
 
+    # Density of the air [km m-2]
+    ro = virtual_ta.expression("(-0.0046 * virtual_ta) + 2.5538", {"virtual_ta": virtual_ta}).rename("ro")
+
+    # Iterative function to define rah and ustar
     def iterative_img(empty, img):
 
         img = ee.Image(img)
 
-        i_H = img.expression(
-            "(i_ro*n_Cp*i_dT)/i_rah", {"i_ro": i_ro, "n_Cp": n_Cp, "i_dT": i_dT, "i_rah": img.select("rah")}
-        ).rename("H")
+        # Sensible heat flux [W m-2]
+        h_inst = img.expression(
+            "(ro*cp*dt)/rah", {"ro": ro, "cp": cp, "dt": dt, "rah": img.select("rah")}
+        ).rename("h_inst")
+        
+        # Monin Obukov length [m]
+        mo_l = img.expression(
+            "-(ro*cp*(ustar**3)*lst)/(0.41*9.81*h_inst)",
+            {"ro": ro, "cp": cp, "ustar": img.select("ustar"), "lst": lst, "h_inst": h_inst},
+        ).rename("ustar")
 
-        i_L = img.expression(
-            "-(i_ro*n_Cp*(i_ufric**3)*i_lst)/(0.41*9.81*i_H)",
-            {"i_ro": i_ro, "n_Cp": n_Cp, "i_ufric": img.select("u_fr"), "i_lst": lst, "i_H": i_H},
-        ).rename("L")
-        i_L = i_L.where(i_L.lt(-1000), -1000)
+        # Filtering L to avoi numerical instability
+        mo_l = mo_l.max(-1000)
 
-        i_psim_200 = i_L.expression("-5*(height/i_L)", {"height": ee.Number(200), "i_L": i_L})
-        i_psih_2 = i_L.expression("-5*(height/i_L)", {"height": ee.Number(2), "i_L": i_L})
-        i_psih_01 = i_L.expression("-5*(height/i_L)", {"height": ee.Number(0.1), "i_L": i_L})
+        # Momentum and heat transport 
+        # Stable conditions (mo_l > 0)
+        psim_200 = mo_l.expression("-5*(height/mo_l)", {"height": ee.Number(200), "mo_l": mo_l})
+        psih_2 = mo_l.expression("-5*(height/mo_l)", {"height": ee.Number(2), "mo_l": mo_l})
+        psih_01 = mo_l.expression("-5*(height/mo_l)", {"height": ee.Number(0.1), "mo_l": mo_l})
 
-        i_x200 = i_L.expression("(1-(16*(height/i_L)))**0.25", {"height": ee.Number(200), "i_L": i_L})
-        i_x2 = i_L.expression("(1-(16*(height/i_L)))**0.25", {"height": ee.Number(2), "i_L": i_L})
-        i_x01 = i_L.expression("(1-(16*(height/i_L)))**0.25", {"height": ee.Number(0.1), "i_L": i_L})
+        # Variables
+        x200 = mo_l.expression("(1-(16*(height/mo_l)))**0.25", {"height": ee.Number(200), "mo_l": mo_l})
+        x2 = mo_l.expression("(1-(16*(height/mo_l)))**0.25", {"height": ee.Number(2), "mo_l": mo_l})
+        x01 = mo_l.expression("(1-(16*(height/mo_l)))**0.25", {"height": ee.Number(0.1), "mo_l": mo_l})
 
-        i_psimu_200 = i_x200.expression(
-            "2*log((1+i_x200)/2)+log((1+i_x200**2)/2)-2*atan(i_x200)+0.5*pi",
-            {"i_x200": i_x200, "pi": ee.Number(math.pi)},
+        # Momentumand heat transport
+        # Unstable conditions (mo_l < 0)
+        psimu_200 = x200.expression(
+            "2*log((1+x200)/2)+log((1+x200**2)/2)-2*atan(x200)+0.5*pi",
+            {"x200": x200, "pi": ee.Number(math.pi)},
         )
-        i_psihu_2 = i_x2.expression("2*log((1+i_x2**2)/2)", {"i_x2": i_x2})
-        i_psihu_01 = i_x01.expression("2*log((1+i_x01**2)/2)", {"i_x01": i_x01})
 
-        i_psim_200 = i_psim_200.where(i_L.lt(0), i_psimu_200)
-        i_psih_2 = i_psih_2.where(i_L.lt(0), i_psihu_2)
-        i_psih_01 = i_psih_01.where(i_L.lt(0), i_psihu_01)
-        i_psim_200 = i_psim_200.where(i_L.eq(0), 0)
-        i_psih_2 = i_psih_2.where(i_L.eq(0), 0)
-        i_psih_01 = i_psih_01.where(i_L.eq(0), 0)
+        psihu_2 = x2.expression("2*log((1+x2**2)/2)", {"x2": x2})
 
-        i_ufric = img.expression(
-            "(u200*0.41)/(log(height/i_zom)-i_psim_200)",
-            {"u200": i_u200, "height": n_height, "i_zom": n_zom, "i_psim_200": i_psim_200},
+        psihu_01 = x01.expression("2*log((1+x01**2)/2)", {"x01": x01})
+
+        # Correcting atmospheric conditions 
+        psim_200 = psim_200.where(mo_l.lt(0), psimu_200)
+        psim_200 = psim_200.where(mo_l.eq(0), 0)
+
+        psih_2 = psih_2.where(mo_l.lt(0), psihu_2)
+        psih_2 = psih_2.where(mo_l.eq(0), 0)
+        
+        psih_01 = psih_01.where(mo_l.lt(0), psihu_01)
+        psih_01 = psih_01.where(mo_l.eq(0), 0)
+
+        # Friction velocity [s/m]
+        ustar = img.expression(
+            "(u200*0.41)/(log(height/zom)-psim_200)",
+            {"u200": u200, "height": blending_height, "zom": zom, "psim_200": psim_200},
         )
-        i_ufric = i_ufric.where(i_ufric.lt(0.02), 0.02).rename("u_fr")
 
-        i_rah = img.expression(
-            "(log(z2/z1)-psi_h2+psi_h01)/(i_ufric*0.41)",
-            {"z2": z2, "z1": z1, "i_ufric": i_ufric, "psi_h2": i_psih_2, "psi_h01": i_psih_01},
+        # Filtering to avoid computing instability
+        ustar = ustar.max(0.02).rename('ustar')  #where(u_star.lt(0.02), 0.02).rename("u_fr")
+
+        # Aerodynamic resistance to heat transport [s/m]
+        rah = img.expression(
+            "(log(z2/z1)-psi_h2+psi_h01)/(ustar*0.41)",
+            {"z2": z2, "z1": z1, "ustar": ustar, "psi_h2": psih_2, "psi_h01": psih_01},
         ).rename("rah")
 
-        return ee.Image.cat([i_ufric, i_rah])
+        return ee.Image.cat([ustar, rah])
 
-    i_ufric = lst.expression(
-        "(n_K *u200) /(log(height/i_zom))", {"u200": i_u200, "height": n_height, "i_zom": n_zom, "n_K": n_K}
-    ).rename("u_fr")
+    # First approximation of Friction velocity [s/m]
+    ustar = lst.expression(
+        "(k_constant *u200) /(log(height/zom))", {
+            "u200": u200, "height": blending_height, "zom": zom_first_approach, "k_constant": k_constant}
+    ).rename("ustar")
 
-    i_rah = lst.expression("(log(z2/z1))/(i_ufric*0.41)", {"z2": z2, "z1": z1, "i_ufric": i_ufric}).rename("rah")
+    # First approcimation of aerodynamic resistance [s/m]
+    rah = lst.expression("(log(z2/z1))/(ustar*0.41)", {"z2": z2, "z1": z1, "ustar": ustar}).rename("rah")
 
-    img_ufr_rah = ee.Image.cat([i_ufric, i_rah])
+    # Preparing for the iteration stability process
+    rah_ustar = ee.Image.cat([ustar, rah])
 
-    i_h_inputs = ee.Image(iterations.iterate(iterative_img, img_ufr_rah))
+    # Get corrected aerodynamic resitance and velocity friction
+    rah_ustart_corr = ee.Image(iterations.iterate(iterative_img, rah_ustar))
 
-    i_h = lst.expression(
-        "(i_ro*n_Cp*i_dT_int)/i_rah", {"i_ro": i_ro, "n_Cp": n_Cp, "i_dT_int": i_dT, "i_rah": i_h_inputs.select("rah")}
-    ).rename("H")
+    # Final Sensible Heat estimation [W/m2]
+    h_inst = lst.expression(
+        "(ro*cp*dt)/rah", {"ro": ro, "cp": cp, "dt": dt, "rah": rah_ustart_corr.select("rah")}
+    ).rename("h_inst")
 
-    # LL - Needs more analysis.
-    """
-    # Evapotranspiration (advection)
-    et_ad = i_dT_int.expression(
-        '(8*(1+ws/100))/(log((0.67*3-n_zom)/i_zom)**2)',{
-        'ws':ux,
-        'n_zom':n_zom,
-        'i_zom':i_zom
-    }
-    ).rename('et_ad')
-    """
-
-    return i_h.rename("h_inst")
+    return h_inst.rename("h_inst")
 
 
 def daily_et(h_inst, g_inst, rn_inst, lst_dem, rad_24h):
@@ -1915,30 +1823,24 @@ def daily_et(h_inst, g_inst, rn_inst, lst_dem, rad_24h):
     """
 
     # Instantaneous Latent Heat flux [W m-2]
-    le_inst = h_inst.expression("(i_Rn - i_G - i_H)", {"i_Rn": rn_inst, "i_G": g_inst, "i_H": h_inst})
+    le_inst = h_inst.expression("(rn_inst - g_inst - h_inst)", {"rn_inst": rn_inst, "g_inst": g_inst, "h_inst": h_inst})
 
     # Latent heat of vaporization or the heat
     # absorbed when a kilogram of water evaporates [J/kg].
-    i_lambda = h_inst.expression("(2.501 - 0.002361 * (Ts - 273.15))", {"Ts": lst_dem})
+    lambda_et = h_inst.expression("(2.501 - 0.002361 * (lst - 273.15))", {"lst": lst_dem})
 
     # Evaporative fraction
-    i_FE = h_inst.expression("i_lambda_ET / (i_Rn - i_G)", {"i_lambda_ET": le_inst, "i_Rn": rn_inst, "i_G": g_inst})
-    i_FE = i_FE.clamp(0, 1)
+    ef = h_inst.expression("le_inst / (rn_inst - g_inst)", {"le_inst": le_inst, "rn_inst": rn_inst, "g_inst": g_inst})
 
-    # Caculating ET using Rn24h (LL)
-    i_ET24h_calc = i_FE.expression(
-        "(0.0864 * i_FE * Rn24hobs) / i_lambda", {"i_FE": i_FE, "i_lambda": i_lambda, "Rn24hobs": rad_24h}
+    # clamping between 0 and 1
+    ef = ef.clamp(0, 1)
+
+    # Caculating ET using Rn24h 
+    daily_et = ef.expression(
+        "(0.0864 * ef * rad_24h) / lambda_et", {"ef": ef, "lambda_et": lambda_et, "rad_24h": rad_24h}
     )
 
-    # Calculating ET using ETr
-    #i_ET24h_calc = i_FE.multiply(et_reference)
-
-    # Filtering et values
-    i_ET24h_calc = i_ET24h_calc.where(i_ET24h_calc.gte(-1).And(i_ET24h_calc.lt(0)), 0.01)
-    i_ET24h_calc = i_ET24h_calc.updateMask(i_ET24h_calc.gte(0))
-    i_ET24h_calc = i_ET24h_calc.updateMask(i_ET24h_calc.lte(9))
-
-    return i_ET24h_calc.rename("et")
+    return daily_et.rename("et")
 
 
 def et_fraction(time_start, et, et_reference_source, et_reference_band, et_reference_factor):

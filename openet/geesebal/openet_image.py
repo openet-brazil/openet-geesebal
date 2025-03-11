@@ -55,13 +55,15 @@ class Image:
         meteorology_source_inst : str, optional
             Instantaneous meteorology source collection ID.
             Collection supported:
-                NASA/NLDAS/FORA0125_H002
+                NLDAS: NASA/NLDAS/FORA0125_H002
+                ERA5: ECMWF/ERA5_LAND/HOURLY
             Meteorology collection must have bands:
                 tair, ux, rh, rso_inst
         meteorology_source_daily : str
             Daily meteorology source collection ID.
             Collection supported:
-                IDAHO_EPSCOR/GRIDMET
+                GRIDMET: IDAHO_EPSCOR/GRIDMET
+                ERA5: projects/openet/assets/meteorology/era5land/sa/daily
             Meteorology collection must have bands:
                 tmmn, tmmx, srad
         elev_source : str, optional
@@ -99,7 +101,7 @@ class Image:
         Standard percentiles are from Allen et al. (2013)
 
         """
-
+        # Image
         self.image = image
 
         # Copy system properties
