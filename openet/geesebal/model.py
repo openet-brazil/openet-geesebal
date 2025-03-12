@@ -28,9 +28,9 @@ def et(
     proj,
     coords,
     #et_reference,
-    cold_calibration_points=1,
-    hot_calibration_points=1,
-    max_iterations=10,
+    cold_calibration_points=10,
+    hot_calibration_points=10,
+    max_iterations=15,
 ):
     """
     Daily Evapotranspiration [mm day-1].
