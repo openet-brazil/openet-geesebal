@@ -174,7 +174,7 @@ def et(
         # Checking if H was estimated, otherwise return a nodata mask
         h_cond = ee.Number(cold_pixels.size()).eq(0).Or(ee.Number(hot_pixels.size()).eq(0))
 
-        h_inst = ee.Image(ee.Algorithms.If(h_cond,
+        h_inst = ee.Image(ee.Algorithms.If(h_cond.eq(0),
                                            ee.Image.constant(0).updateMask(0),
                                            h_inst)).rename("h_inst")
 
@@ -1658,11 +1658,11 @@ def sensible_heat_flux(
                 geometry=lst.geometry()
             ).getNumber('b')
 
-            coef_a = coef_a.rename('b').reduceRegion(
+            coef_a = coef_a.rename('a').reduceRegion(
                 reducer = ee.Reducer.mean(),
                 scale=10000,
                 geometry=lst.geometry()
-            ).getNumber('b')
+            ).getNumber('a')
 
             return ee.Feature(None, {"a": coef_a, "b": coef_b})
 
