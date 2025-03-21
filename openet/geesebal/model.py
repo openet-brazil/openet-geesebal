@@ -141,55 +141,53 @@ def et(
 
     # LL: iterative process or endmembers selections may return empty values
     # in this case, return an empty image instead of broken the code
-    try:
+    #try:
         # Air temperature correction [K]
-        tair_dem = tair_dem_correction(tmin, tmax, elev)
+    tair_dem = tair_dem_correction(tmin, tmax, elev)
 
-        # Land surface temperature correction [K]
-        lst_dem = lst_correction(time_start, lst, elev, tair_dem, rh, sun_elevation,
-                                                 hour, minutes, coords, geometry_image)
+    # Land surface temperature correction [K]
+    lst_dem = lst_correction(time_start, lst, elev, tair_dem, rh, sun_elevation,
+                                                hour, minutes, coords, geometry_image)
 
-        # Instantaneous net radiation using reanalysis dataset [W m-2]
-        rad_inst = radiation_inst(elev, lst, emissivity, albedo, tair, rh, rso_inst, sun_elevation, cos_zn)
+    # Instantaneous net radiation using reanalysis dataset [W m-2]
+    rad_inst = radiation_inst(elev, lst, emissivity, albedo, tair, rh, rso_inst, sun_elevation, cos_zn)
 
-        # Instantaneous soil heat flux [W m-2]
-        g_inst = soil_heat_flux(rad_inst, ndvi, albedo, lst_dem, ndwi)
+    # Instantaneous soil heat flux [W m-2]
+    g_inst = soil_heat_flux(rad_inst, ndvi, albedo, lst_dem, ndwi)
 
-        # Daily ney radiation [W m-2]
-        rad_24h = radiation_24h(time_start, tmax, tmin, elev, sun_elevation, cos_zn, rso24h)
+    # Daily ney radiation [W m-2]
+    rad_24h = radiation_24h(time_start, tmax, tmin, elev, sun_elevation, cos_zn, rso24h)
 
-        # Cold pixel for wet conditions repretation of the image
-        cold_pixels = cold_pixel(albedo, ndvi, ndwi, lst_dem, top_ndvi, coldest_lst,
-                                        geometry_image, coords, proj, elev, cold_calibration_points)
+    # Cold pixel for wet conditions repretation of the image
+    cold_pixels = cold_pixel(albedo, ndvi, ndwi, lst_dem, top_ndvi, coldest_lst,
+                                    geometry_image, coords, proj, elev, cold_calibration_points)
+    # Hot pixel
+    hot_pixels = fexp_hot_pixel(time_start, albedo, ndvi, ndwi, lst,lst_dem, rad_inst,
+                                    g_inst, tair, ux, lowest_ndvi, hottest_lst, geometry_image,
+                                        coords, proj, elev, tfac, hot_calibration_points)
+    # Instantaneous sensible heat flux [W m-2]
+    h_inst = sensible_heat_flux(savi, ux, cold_pixels, hot_pixels, lst_dem, lst,
+                                    elev, geometry_image, max_iterations)
+    
+    # Checking if H was estimated, otherwise return a nodata mask
+    h_cond = ee.Number(cold_pixels.size()).eq(0).Or(ee.Number(hot_pixels.size()).eq(0))
 
-        # Hot pixel
-        hot_pixels = fexp_hot_pixel(time_start, albedo, ndvi, ndwi, lst,lst_dem, rad_inst,
-                                        g_inst, tair, ux, lowest_ndvi, hottest_lst, geometry_image,
-                                            coords, proj, elev, tfac, hot_calibration_points)
+    h_inst = ee.Image(ee.Algorithms.If(h_cond.eq(1),
+                                       ee.Image.constant(0).updateMask(0),
+                                      h_inst)).rename("h_inst")
 
-        # Instantaneous sensible heat flux [W m-2]
-        h_inst = sensible_heat_flux(savi, ux, cold_pixels, hot_pixels, lst_dem, lst,
-                                        elev, geometry_image, max_iterations)
-        
-        # Checking if H was estimated, otherwise return a nodata mask
-        h_cond = ee.Number(cold_pixels.size()).eq(0).Or(ee.Number(hot_pixels.size()).eq(0))
+    # Daily evapotranspiration [mm day-1]
+    et_24hr = daily_et(h_inst, g_inst, rad_inst, lst_dem, rad_24h)
 
-        h_inst = ee.Image(ee.Algorithms.If(h_cond.eq(0),
-                                           ee.Image.constant(0).updateMask(0),
-                                           h_inst)).rename("h_inst")
-
-        # Daily evapotranspiration [mm day-1]
-        et_24hr = daily_et(h_inst, g_inst, rad_inst, lst_dem, rad_24h)
-
-    except Exception as e:
+    #except Exception as e:
         # CGM - We should probably log the exception so the user knows,
         #   but this will cause problems when mapping over a collection
-        print(f"Unhandled Exception: {e}")
+        #print(f"Unhandled Exception: {e}")
 
         # Return a masked image
-        et_24hr = ee.Image.constant(0).updateMask(0).rename("et")
+        #et_24hr = ee.Image.constant(0).updateMask(0).rename("et")
 
-    return et_24hr
+    return et_24hr.rename("et")
 
 
 def meteorology_nldas_gridmet(time_start, meteorology_source_inst, meteorology_source_daily):
@@ -1420,23 +1418,23 @@ def sensible_heat_flux(
     iterations = ee.List.repeat(1, max_iterations)
 
     # Vegetation height [m]
-    veg_height = ee.Image.constant(0.5).float()
+    veg_height = ee.Number(0.5)
 
     # Wind speed height [m]
-    zx = ee.Image.constant(2).float()
+    zx = ee.Number(2)
 
     # Blending height [m]
-    blending_height = ee.Image.constant(200).float()
+    blending_height = ee.Number(200)
 
     # Air specific heat [J kg-1 K-1]
-    cp = ee.Image.constant(1004).float()
+    cp = ee.Number(1004)
 
     # Von Karman’s constant
-    k_constant = ee.Image.constant(0.41).float()
+    k_constant = ee.Number(0.41)
 
     # Heights [m] above the zero plane displacement.
-    z1 = ee.Image.constant(0.01).float()
-    z2 = ee.Image.constant(2).float()
+    z1 = ee.Number(0.01)
+    z2 = ee.Number(2)
 
     # Filtering low lalues of wind speed
     wind_speed_std = (
@@ -1453,7 +1451,7 @@ def sensible_heat_flux(
     ux = ux.where(ux.lt(1.5), ux.add(wind_speed_std_value))
 
     # Slope/ Aspect
-    slope_aspect = ee.Terrain.products(dem)
+    #slope_aspect = ee.Terrain.products(dem)
 
     # Momentum roughness length at the weather station. (Allen2002 Eqn 28)
     zom_first_approach = veg_height.multiply(0.123)
@@ -1473,10 +1471,10 @@ def sensible_heat_flux(
     zom = lst.expression('exp((5.62 * savi) - 5.809)', {'savi': savi})
 
     # Momentum roughness slope/aspect Correction.  (Allen2002  A12 Eqn9)
-    zom = zom.expression(
-         'zom * (1 + (slope - 5) / 20)',
-         {'zom': zom, 'slope': slope_aspect.select('slope')}
-     )
+    #zom = zom.expression(
+    #     'zom * (1 + (slope - 5) / 20)',
+    #     {'zom': zom, 'slope': slope_aspect.select('slope')}
+    #)
 
     # Finding the a and b coefficients of  dt = a+bTs equation
     def map_cold(cold):
@@ -1485,7 +1483,7 @@ def sensible_heat_flux(
         cold_pixel = ee.Feature(cold)
 
         # Lst cold pixel value
-        ts_cold_pixel = ee.Image.constant(cold_pixel.get("lst_nw")).float()
+        ts_cold_pixel = ee.Number(cold_pixel.get("lst_nw")).float()
 
         # Mapping hot pixels
         def map_hot(hot):
@@ -1494,20 +1492,20 @@ def sensible_heat_flux(
             hot_pixel = ee.Feature(hot)
 
             # Lst hot pixel value
-            ts_hot_pixel = ee.Image.constant(hot_pixel.get("lst_nw")).subtract(ee.Image.constant(hot_pixel.get("tfac")))
+            ts_hot_pixel = ee.Number(hot_pixel.get("lst_nw")).subtract(ee.Number(hot_pixel.get("tfac")))
             #n_Ts_true_hot = ee.Number(hot_pixel.get("lst"))
 
             # G inst hot pixel value
-            g_inst_hot = ee.Image.constant(hot_pixel.get("g_inst"))
+            g_inst_hot = ee.Number(hot_pixel.get("g_inst"))
 
             # Rn inst hot pixel value
-            rn_inst_hot = ee.Image.constant(hot_pixel.get("rn_inst"))
+            rn_inst_hot = ee.Number(hot_pixel.get("rn_inst"))
 
             # Wind speed hot pixel value
-            ux_hot = ee.Image.constant(hot_pixel.get("ux"))
+            ux_hot = ee.Number(hot_pixel.get("ux"))
 
             # Tair hot pixel value
-            tair_hot = ee.Image.constant(hot_pixel.get("tair")).add(273.15)
+            tair_hot = ee.Number(hot_pixel.get("tair")).add(273.15)
             # n_long_hot = ee.Number(f_hot.get("longitude"))
             # n_lat_hot = ee.Number(f_hot.get("latitude"))
             # p_hot_pix = ee.Geometry.Point([n_long_hot, n_lat_hot])
@@ -1516,7 +1514,7 @@ def sensible_heat_flux(
             #ro_hot = ts_hot_pixel.multiply(-0.0046).add(2.5538)
 
             # Sensible heat flux at the hot pixel
-            h_inst_hot = rn_inst_hot.subtract(g_inst_hot)
+            h_inst_hot = ee.Number(rn_inst_hot).subtract(ee.Number(g_inst_hot))
 
             # Roughness at hot pixel []
             # TODO:LL - Why not the zoom at the hot pixel?
@@ -1543,7 +1541,7 @@ def sensible_heat_flux(
             )
 
             # Filtering minimum value 
-            u200_hot = u200_hot.max(4)
+            u200_hot = u200_hot.max(ee.Number(4))
 
             # Aerodynamic resistance at hot pixel [s m-1]
             rah_hot = ustar_hot.expression(
@@ -1553,8 +1551,8 @@ def sensible_heat_flux(
             )
 
             # Density of the air [km m-2]
-            ro_hot = tair_hot.multiply(-0.0046).add(2.5538)
-            
+            ro_hot = (ee.Number(-0.0046).multiply(tair_hot)).add(ee.Number(2.5538))
+
             # First feature of iterative process
             hot_pixel = ee.Feature(hot_pixel.geometry(),{
                 "ustar": ustar_hot,"rah": rah_hot})
@@ -1565,13 +1563,13 @@ def sensible_heat_flux(
                 feat = ee.Feature(old)
 
                 # Aerodynamic resistance at the hot pixel [s m-1]
-                rah_hot = ee.Image(feat.get("rah")).max(0)
+                rah_hot = ee.Number(feat.get("rah")).max(0)
 
                 # Friction velocity at hot pixel []
-                ustart_hot = ee.Image(feat.get("ustar")).max(0)
+                ustart_hot = ee.Number(feat.get("ustar")).max(0)
 
                 # Monin obukov length at the hot pixel [m]
-                l_hot = ustart_hot.expression(
+                l_hot = ee.Number(ustart_hot.expression(
                         "-(ro_hot*cp*(ustar_hot**3)*ts_hot_pixel)/(0.41*9.81*h_inst_hot)",
                         {
                             "ro_hot": ro_hot,
@@ -1581,44 +1579,56 @@ def sensible_heat_flux(
                             "h_inst_hot": h_inst_hot,
                         },
                     
-                )
+                ))
 
                 # Filtering minimum value 
-                l_hot = l_hot.max(-1000)
+                l_hot = l_hot.max(ee.Number(-1000))
 
                 # Momentum and heat transport 
                 # Stable conditions (l > 0)
-                psim_200 = ee.Image(l_hot.expression("-5*(height/l_hot)", {"height": blending_height, "l_hot": l_hot}))
-                psih_2 = ee.Image(l_hot.expression("-5*(height/l_hot)", {"height": z2, "l_hot": l_hot}))
-                psih_01 = ee.Image(l_hot.expression("-5*(height/l_hot)", {"height": z1, "l_hot": l_hot}))
+                psim_200 = ee.Number(l_hot.expression("-5*(height/l_hot)", {"height": blending_height, "l_hot": l_hot}))
+                psih_2 = ee.Number(l_hot.expression("-5*(height/l_hot)", {"height": z2, "l_hot": l_hot}))
+                psih_01 = ee.Number(l_hot.expression("-5*(height/l_hot)", {"height": z1, "l_hot": l_hot}))
 
                 # MO variables
-                x200 = ee.Image(l_hot.expression("(1-(16*(height/l_hot)))**0.25", {"height": blending_height, "l_hot": l_hot}))
+                x200 = ee.Number(l_hot.expression("(1-(16*(height/l_hot)))**0.25", {"height": blending_height, "l_hot": l_hot}))
                 
-                x2 = ee.Image(l_hot.expression("(1-(16*(height/l_hot)))**0.25", {"height": z2, "l_hot": l_hot}))
-                x01 = ee.Image(l_hot.expression("(1-(16*(height/l_hot)))**0.25", {"height": z1, "l_hot": l_hot}))
+                x2 = ee.Number(l_hot.expression("(1-(16*(height/l_hot)))**0.25", {"height": z2, "l_hot": l_hot}))
+                x01 = ee.Number(l_hot.expression("(1-(16*(height/l_hot)))**0.25", {"height": z1, "l_hot": l_hot}))
 
-                psimu_200 = ee.Image(x200.expression(
+                psimu_200 = ee.Number(x200.expression(
                         "2*log((1+x200)/2)+log((1+x200**2)/2)-2*atan(x200)+0.5*pi",
                         {"x200": x200, "pi": ee.Number(math.pi)},
                     ))
                 
-                psihu_2 = ee.Image(x2.expression("2*log((1+x2**2)/2)", {"x2": x2}))
+                psihu_2 = ee.Number(x2.expression("2*log((1+x2**2)/2)", {"x2": x2}))
 
-                psihu_01 = ee.Image(x01.expression("2*log((1+x01**2)/2)", {"x01": x01}))
+                psihu_01 = ee.Number(x01.expression("2*log((1+x01**2)/2)", {"x01": x01}))
                 
                 # Correcting atmospheric conditions
-                psim_200 = psim_200.where(l_hot.lt(0), psimu_200)
-                psim_200 = psim_200.where(l_hot.eq(0), 0)
+                #psim_200 = psim_200.where(l_hot.lt(0), psimu_200)
+                #psim_200 = psim_200.where(l_hot.eq(0), 0)
                
-                psih_2 = psih_2.where(l_hot.lt(0), psihu_2)
-                psih_2 = psih_2.where(l_hot.eq(0), 0)
+                #psih_2 = psih_2.where(l_hot.lt(0), psihu_2)
+                #psih_2 = psih_2.where(l_hot.eq(0), 0)
 
-                psih_01 = psih_01.where(l_hot.lt(0), psihu_01)
-                psih_01 = psih_01.where(l_hot.eq(0), 0)
+                #psih_01 = psih_01.where(l_hot.lt(0), psihu_01)
+                #psih_01 = psih_01.where(l_hot.eq(0), 0)
+
+
+                psim_200 = ee.Number(ee.Algorithms.If(l_hot.lt(0),psimu_200,
+                        ee.Algorithms.If(l_hot.eq(0),ee.Number(0),psim_200))
+                )
+                psih_2 = ee.Number(ee.Algorithms.If(l_hot.lt(0),psihu_2,
+                        ee.Algorithms.If(l_hot.eq(0),ee.Number(0), psih_2))
+                )
+
+                psih_01 = ee.Number(ee.Algorithms.If(l_hot.lt(0),psihu_01,
+                        ee.Algorithms.If(l_hot.eq(0),ee.Number(0),psih_01  ))
+                )
 
                 # Friction velocity at the hot pixel
-                ustar_hot = ee.Image(
+                ustar_hot = ee.Number(
                     u200_hot.expression(
                         "(u200*0.41)/(log(height/zom)-psim_200)",
                         {"u200": u200_hot, "height": blending_height, "zom": zom_hot, "psim_200": psim_200},
@@ -1626,13 +1636,13 @@ def sensible_heat_flux(
                 )   
 
                 # Filtering to avoid computing instability
-                ustar_hot = ustar_hot.max(0.02)
+                ustar_hot = ustar_hot.max(ee.Number(0.02))
 
                 # Aerodynamic resistance to heat transport [s/m]
-                rah_hot = ustar_hot.expression(
+                rah_hot = ee.Number(ustar_hot.expression(
                         "(log(z2/z1)-psi_h2+psi_h01)/(ustar*0.41)",
                         {"z2": z2, "z1": z1, "ustar": ustar_hot, "psi_h2": psih_2, "psi_h01": psih_01},
-                    )
+                    ))
 
                 return ee.Feature(hot_pixel.geometry(),{"ustar": ustar_hot,"rah": rah_hot})
 
@@ -1640,29 +1650,29 @@ def sensible_heat_flux(
             hot_pixel = ee.Feature(iterations.iterate(iterative_hot, hot_pixel))
 
             # Aerodynamic resistance to heat transport [s/m]
-            rah_hot = ee.Image(hot_pixel.get("rah"))
+            rah_hot = ee.Number(hot_pixel.get("rah"))
 
             # Difference temperature at the hot pixel
             dT_hot = (h_inst_hot.multiply(rah_hot)).divide(ro_hot.multiply(cp))
 
             # Difference temperature at the cold pixel
-            dT_cold = ee.Image(0)
+            dT_cold = ee.Number(0)
 
-            # Coef a
+            # Coef a and b
             coef_a = (dT_cold.subtract(dT_hot)).divide(ts_cold_pixel.subtract(ts_hot_pixel))
             coef_b = dT_hot.subtract(coef_a.multiply(ts_hot_pixel))
 
-            coef_b = coef_b.rename('b').reduceRegion(
-                reducer = ee.Reducer.mean(),
-                scale=10000,
-                geometry=lst.geometry()
-            ).getNumber('b')
+            #coef_b = coef_b.rename('b').reduceRegion(
+            #    reducer = ee.Reducer.first(),
+            #    scale=30,
+            #    geometry=hot_pixel.geometry()
+            #).getNumber('b')
 
-            coef_a = coef_a.rename('a').reduceRegion(
-                reducer = ee.Reducer.mean(),
-                scale=10000,
-                geometry=lst.geometry()
-            ).getNumber('a')
+            #coef_a = coef_a.rename('a').reduceRegion(
+            #     reducer = ee.Reducer.first(),
+            #   scale=30,
+             #   geometry=hot_pixel.geometry()
+            #).getNumber('a')
 
             return ee.Feature(None, {"a": coef_a, "b": coef_b})
 
@@ -1674,22 +1684,23 @@ def sensible_heat_flux(
 
     # Dictionary with the results
     dict_linear_coeffs = ee.FeatureCollection(fc_cold_pixels.toList(list_length).map(map_cold).flatten())
-    
+
     # Coefs lists
     coeff_a_list = dict_linear_coeffs.aggregate_array("a")
     coeff_b_list = dict_linear_coeffs.aggregate_array("b")
 
-
     coeff_a_list = dict_linear_coeffs.aggregate_array("a")
     coeff_b_list = dict_linear_coeffs.aggregate_array("b")
 
-    coef_a = ee.Image(coeff_a_list.reduce(ee.Reducer.median()))
-    coef_a = ee.List([coef_a,0]).reduce(ee.Reducer.firstNonNull())
-    coef_a = ee.Image.constant(coef_a).float()
+    #coef_a = ee.Image(coeff_a_list.reduce(ee.Reducer.median()))
+    #coef_a = ee.List([coef_a,0]).reduce(ee.Reducer.firstNonNull())
+    #coef_a = ee.Image.constant(coef_a).float()
+    coef_a = ee.Number(coeff_a_list.reduce(ee.Reducer.median()))
 
-    coef_b = ee.Image(coeff_b_list.reduce(ee.Reducer.median()))
-    coef_b = ee.List([coef_b,0]).reduce(ee.Reducer.firstNonNull())
-    coef_b = ee.Image.constant(coef_b).float()
+    #coef_b = ee.Image(coeff_b_list.reduce(ee.Reducer.median()))
+    #coef_b = ee.List([coef_b,0]).reduce(ee.Reducer.firstNonNull())
+   #coef_b = ee.Image.constant(coef_b).float()
+    coef_b = ee.Number(coeff_b_list.reduce(ee.Reducer.median()))
 
     # Surface Temperature difference [K]
     dt = lst_dem.expression(
