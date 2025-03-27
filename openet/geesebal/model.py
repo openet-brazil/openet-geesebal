@@ -322,7 +322,7 @@ def meteorology_nldas_gridmet(time_start, meteorology_source_inst, meteorology_s
     accum_period = -60
 
     # Accum meteo data 
-    gridmet_accum = ee.ImageCollection("IDAHO_EPSCOR/GRIDMET").filterDate(
+    gridmet_accum = ee.ImageCollection(meteorology_source_daily).filterDate(
         ee.Date(time_start).advance(accum_period, "days"), ee.Date(time_start)
     )
 
@@ -486,15 +486,15 @@ def meteorology_era5land(time_start, meteorology_source_inst, meteorology_source
     accum_period = -60
 
     # Accum meteo data 
-    gridmet_accum = ee.ImageCollection("IDAHO_EPSCOR/GRIDMET").filterDate(
+    gridmet_accum = ee.ImageCollection(meteorology_source_daily).filterDate(
         ee.Date(time_start).advance(accum_period, "days"), ee.Date(time_start)
     )
 
     # Reference ET 
-    etr_accum = gridmet_accum.select("etr").sum()
+    etr_accum = gridmet_accum.select("etr_asce").sum()
 
     # Precipitation
-    precipt_accum = gridmet_accum.select("pr").sum()
+    precipt_accum = gridmet_accum.select("total_precipitation").sum()
 
     # Ratio between precipt/etr
     ratio = precipt_accum.divide(etr_accum)
@@ -1409,7 +1409,6 @@ def sensible_heat_flux(
 
     # Momentum roughness length at the weather station. (Allen2002 Eqn 28)
     zom_first_approach = veg_height.multiply(0.123)
-    zom = veg_height.multiply(0.123)
 
     # Friction velocity at the weather station. (Allen2002 Eqn 37)
     # TODO: LL - We need to change this approach
@@ -1423,7 +1422,7 @@ def sensible_heat_flux(
                 "zom": zom_first_approach, "k_constant": k_constant})
 
     # Momentum roughness length for each pixel.
-    #zom = lst.expression('exp((5.62 * savi) - 5.809)', {'savi': savi})
+    zom = lst.expression('exp((5.62 * savi) - 5.809)', {'savi': savi})
 
     # Momentum roughness slope/aspect Correction.  (Allen2002  A12 Eqn9)
     #zom = zom.expression(
