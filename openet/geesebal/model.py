@@ -1422,7 +1422,8 @@ def sensible_heat_flux(
                 "zom": zom_first_approach, "k_constant": k_constant})
 
     # Momentum roughness length for each pixel.
-    zom = lst.expression('exp((5.62 * savi) - 5.809)', {'savi': savi})
+    #zom = lst.expression('exp((5.62 * savi) - 5.809)', {'savi': savi})
+    zom = veg_height.multiply(0.123)
 
     # Momentum roughness slope/aspect Correction.  (Allen2002  A12 Eqn9)
     #zom = zom.expression(

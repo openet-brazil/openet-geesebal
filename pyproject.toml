@@ -1,6 +1,10 @@
 [project]
 name = "openet-geesebal"
+<<<<<<< HEAD
 version = "0.4.1"
+=======
+version = "0.4.0"
+>>>>>>> 5cb91ba6e0ab74d6f25c6dfb61a0ebed24623a7b
 authors = [
     { name = "Anderson Ruhoff", email = "andersonruhoff@gmail.com" },
     { name = "Leonardo Laipelt", email = "leolaipelt@gmail.com" },
