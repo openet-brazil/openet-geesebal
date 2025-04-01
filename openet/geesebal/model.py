@@ -1446,7 +1446,7 @@ def sensible_heat_flux(
             hot_pixel = ee.Feature(hot)
 
             # Lst hot pixel value
-            ts_hot_pixel = ee.Number(hot_pixel.get("lst_nw")).subtract(ee.Number(hot_pixel.get("tfac")))
+            ts_hot_pixel = ee.Number(hot_pixel.get("lst")).subtract(ee.Number(hot_pixel.get("tfac")))
             #n_Ts_true_hot = ee.Number(hot_pixel.get("lst"))
 
             # G inst hot pixel value
