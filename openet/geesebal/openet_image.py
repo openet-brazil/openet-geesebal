@@ -14,31 +14,33 @@ def lazy_property(fn):
     """Decorator that makes a property lazy-evaluated
     https://stevenloria.com/lazy-properties/
     """
-    attr_name = '_lazy_' + fn.__name__
+    attr_name = "_lazy_" + fn.__name__
 
     @property
     def _lazy_property(self):
         if not hasattr(self, attr_name):
             setattr(self, attr_name, fn(self))
         return getattr(self, attr_name)
+
     return _lazy_property
 
 
-class Image():
+class Image:
     """Google Earth Engine SEBAL - GEESEBAL for Landsat image"""
 
-    _C2_LST_CORRECT = False  # Enable (True) C2 LST correction to recalculate LST
+    _C2_LST_CORRECT = True  # Enable (True) C2 LST correction to recalculate LST
 
     def __init__(
-            self, image,
-            meteorology_source_inst='NASA/NLDAS/FORA0125_H002',
-            meteorology_source_daily='IDAHO_EPSCOR/GRIDMET',
-            elev_source='USGS/SRTMGL1_003',
-            ndvi_cold=5,
-            ndvi_hot=10,
-            lst_cold=20,
-            lst_hot=20,
-            **kwargs,
+        self,
+        image,
+        meteorology_source_inst="NASA/NLDAS/FORA0125_H002",
+        meteorology_source_daily="IDAHO_EPSCOR/GRIDMET",
+        elev_source="USGS/SRTMGL1_003",
+        ndvi_cold=5,
+        ndvi_hot=10,
+        lst_cold=20,
+        lst_hot=20,
+        **kwargs,
     ):
         """Construct a generic GEESEBAL Image
 
@@ -53,13 +55,15 @@ class Image():
         meteorology_source_inst : str, optional
             Instantaneous meteorology source collection ID.
             Collection supported:
-                NASA/NLDAS/FORA0125_H002
+                NLDAS: NASA/NLDAS/FORA0125_H002
+                ERA5: ECMWF/ERA5_LAND/HOURLY
             Meteorology collection must have bands:
                 tair, ux, rh, rso_inst
         meteorology_source_daily : str
             Daily meteorology source collection ID.
             Collection supported:
-                IDAHO_EPSCOR/GRIDMET
+                GRIDMET: IDAHO_EPSCOR/GRIDMET
+                ERA5: projects/openet/assets/meteorology/era5land/sa/daily
             Meteorology collection must have bands:
                 tmmn, tmmx, srad
         elev_source : str, optional
@@ -85,8 +89,10 @@ class Image():
             et_reference_resample : {'nearest', 'bilinear', 'bicubic', None}
                 Reference ET resampling.  The default is None which is
                 equivalent to nearest neighbor resampling.
-            calibration_points : int
-                Number of calibration points (the default is 6).
+            cold_calibration_points : int
+                Number of cold calibration points (the default is 10).
+            hot_calibration_points : int
+                Number of hot calibration points (the default is 10).
             max_iterations : int
                 Maximum number of iterations (the default is 15).
 
@@ -95,37 +101,34 @@ class Image():
         Standard percentiles are from Allen et al. (2013)
 
         """
-
+        # Image
         self.image = image
 
         # Copy system properties
-        self._id = self.image.get('system:id')
-        self._index = self.image.get('system:index')
-        self._time_start = self.image.get('system:time_start')
+        self._id = self.image.get("system:id")
+        self._index = self.image.get("system:index")
+        self._time_start = self.image.get("system:time_start")
         self._properties = {
-            'system:index': self._index,
-            'system:time_start': self._time_start,
-            'image_id': self._id,
+            "system:index": self._index,
+            "system:time_start": self._time_start,
+            "image_id": self._id,
         }
         # Build SCENE_ID from the (possibly merged) system:index
-        scene_id = ee.List(ee.String(self._index).split('_')).slice(-3)
+        scene_id = ee.List(ee.String(self._index).split("_")).slice(-3)
         self._scene_id = (
-            ee.String(scene_id.get(0)).cat('_')
-            .cat(ee.String(scene_id.get(1))).cat('_')
-            .cat(ee.String(scene_id.get(2)))
+            ee.String(scene_id.get(0)).cat("_").cat(ee.String(scene_id.get(1))).cat("_").cat(ee.String(scene_id.get(2)))
         )
 
         # Build WRS2_TILE from the scene_id
-        self._wrs2_tile = ee.String('p').cat(self._scene_id.slice(5, 8))\
-            .cat('r').cat(self._scene_id.slice(8, 11))
+        self._wrs2_tile = ee.String("p").cat(self._scene_id.slice(5, 8)).cat("r").cat(self._scene_id.slice(8, 11))
 
         # Set server side date/time properties using the 'system:time_start'
         self._date = ee.Date(self._time_start)
-        self._year = ee.Number(self._date.get('year'))
-        self._month = ee.Number(self._date.get('month'))
+        self._year = ee.Number(self._date.get("year"))
+        self._month = ee.Number(self._date.get("month"))
         self._start_date = ee.Date(utils.date_to_time_0utc(self._date))
-        self._end_date = self._start_date.advance(1, 'day')
-        self._doy = ee.Number(self._date.getRelative('day', 'year')).add(1).int()
+        self._end_date = self._start_date.advance(1, "day")
+        self._doy = ee.Number(self._date.getRelative("day", "year")).add(1).int()
 
         # Model input parameters
         self._meteorology_source_inst = meteorology_source_inst
@@ -138,52 +141,52 @@ class Image():
 
         # Reference ET parameters
         try:
-            self.et_reference_source = kwargs['et_reference_source']
+            self.et_reference_source = kwargs["et_reference_source"]
         except:
             self.et_reference_source = None
         try:
-            self.et_reference_band = kwargs['et_reference_band']
+            self.et_reference_band = kwargs["et_reference_band"]
         except:
             self.et_reference_band = None
         try:
-            self.et_reference_factor = kwargs['et_reference_factor']
+            self.et_reference_factor = kwargs["et_reference_factor"]
         except:
             self.et_reference_factor = None
         try:
-            self.et_reference_resample = kwargs['et_reference_resample']
+            self.et_reference_resample = kwargs["et_reference_resample"]
         except:
             self.et_reference_resample = None
 
         # Check reference ET parameters
-        if (self.et_reference_factor and
-                not utils.is_number(self.et_reference_factor)):
-            raise ValueError('et_reference_factor must be a number')
+        if self.et_reference_factor and not utils.is_number(self.et_reference_factor):
+            raise ValueError("et_reference_factor must be a number")
         if self.et_reference_factor and self.et_reference_factor < 0:
-            raise ValueError('et_reference_factor must be greater than zero')
-        resample_methods = ['nearest', 'bilinear', 'bicubic']
-        if (self.et_reference_resample and
-                self.et_reference_resample.lower() not in resample_methods):
-            raise ValueError('unsupported et_reference_resample method')
+            raise ValueError("et_reference_factor must be greater than zero")
+        resample_methods = ["nearest", "bilinear", "bicubic"]
+        if self.et_reference_resample and self.et_reference_resample.lower() not in resample_methods:
+            raise ValueError("unsupported et_reference_resample method")
 
         self.geometry = self.image.select(0).geometry()
         self.proj = self.image.select(0).projection()
         self.latlon = ee.Image.pixelLonLat().reproject(self.proj)
-        self.coords = self.latlon.select(['longitude', 'latitude'])
+        self.coords = self.latlon.select(["longitude", "latitude"])
 
         # Image projection and geotransform
         self.crs = image.projection().crs()
-        self.transform = ee.List(
-            ee.Dictionary(ee.Algorithms.Describe(image.projection())).get('transform')
-        )
+        self.transform = ee.List(ee.Dictionary(ee.Algorithms.Describe(image.projection())).get("transform"))
 
         # CGM - Testing out passing as a kwargs but could be dedicated function params
         try:
-            self.calibration_points = kwargs['calibration_points']
+            self.cold_calibration_points = kwargs["cold_calibration_points"]
         except:
-            self.calibration_points = 6
+            self.cold_calibration_points = 10
+        try:
+            self.hot_calibration_points = kwargs["hot_calibration_points"]
+        except:
+            self.hot_calibration_points = 10
 
         try:
-            self.max_iterations = kwargs['max_iterations']
+            self.max_iterations = kwargs["max_iterations"]
         except:
             self.max_iterations = 15
 
@@ -207,19 +210,19 @@ class Image():
         # DEADBEEF - Should the supported image collection IDs and helper
         # function mappings be set in a property or method of the Image class?
         collection_methods = {
-            'LANDSAT/LT04/C02/T1_L2': 'from_landsat_c2_sr',
-            'LANDSAT/LT05/C02/T1_L2': 'from_landsat_c2_sr',
-            'LANDSAT/LE07/C02/T1_L2': 'from_landsat_c2_sr',
-            'LANDSAT/LC08/C02/T1_L2': 'from_landsat_c2_sr',
-            'LANDSAT/LC09/C02/T1_L2': 'from_landsat_c2_sr',
+            "LANDSAT/LT04/C02/T1_L2": "from_landsat_c2_sr",
+            "LANDSAT/LT05/C02/T1_L2": "from_landsat_c2_sr",
+            "LANDSAT/LE07/C02/T1_L2": "from_landsat_c2_sr",
+            "LANDSAT/LC08/C02/T1_L2": "from_landsat_c2_sr",
+            "LANDSAT/LC09/C02/T1_L2": "from_landsat_c2_sr",
         }
 
         try:
-            method_name = collection_methods[image_id.rsplit('/', 1)[0]]
+            method_name = collection_methods[image_id.rsplit("/", 1)[0]]
         except KeyError:
-            raise ValueError(f'unsupported collection ID: {image_id}')
+            raise ValueError(f"unsupported collection ID: {image_id}")
         except Exception as e:
-            raise Exception(f'unhandled exception: {e}')
+            raise Exception(f"unhandled exception: {e}")
 
         method = getattr(Image, method_name)
 
@@ -246,56 +249,68 @@ class Image():
         sr_image = ee.Image(sr_image)
 
         # Use the SPACECRAFT_ID property identify each Landsat type
-        spacecraft_id = ee.String(sr_image.get('SPACECRAFT_ID'))
+        spacecraft_id = ee.String(sr_image.get("SPACECRAFT_ID"))
 
         # Rename bands to generic names
-        input_bands = ee.Dictionary({
-            'LANDSAT_4': ['SR_B1', 'SR_B2', 'SR_B3', 'SR_B4',
-                          'SR_B5', 'SR_B7', 'ST_B6', 'QA_PIXEL'],
-            'LANDSAT_5': ['SR_B1', 'SR_B2', 'SR_B3', 'SR_B4',
-                          'SR_B5', 'SR_B7', 'ST_B6', 'QA_PIXEL'],
-            'LANDSAT_7': ['SR_B1', 'SR_B2', 'SR_B3', 'SR_B4',
-                          'SR_B5', 'SR_B7', 'ST_B6', 'QA_PIXEL'],
-            'LANDSAT_8': ['SR_B1', 'SR_B2', 'SR_B3', 'SR_B4', 'SR_B5',
-                          'SR_B6', 'SR_B7', 'ST_B10', 'QA_PIXEL'],
-            'LANDSAT_9': ['SR_B1', 'SR_B2', 'SR_B3', 'SR_B4', 'SR_B5',
-                          'SR_B6', 'SR_B7', 'ST_B10', 'QA_PIXEL'],
-        })
-        output_bands = ee.Dictionary({
-            'LANDSAT_4': ['blue', 'green', 'red', 'nir',
-                          'swir1', 'swir2', 'lst', 'QA_PIXEL'],
-            'LANDSAT_5': ['blue', 'green', 'red', 'nir',
-                          'swir1', 'swir2', 'lst', 'QA_PIXEL'],
-            'LANDSAT_7': ['blue', 'green', 'red', 'nir',
-                          'swir1', 'swir2', 'lst', 'QA_PIXEL'],
-            'LANDSAT_8': ['ultra_blue', 'blue', 'green', 'red', 'nir',
-                          'swir1', 'swir2', 'lst', 'QA_PIXEL'],
-            'LANDSAT_9': ['ultra_blue', 'blue', 'green', 'red', 'nir',
-                          'swir1', 'swir2', 'lst', 'QA_PIXEL'],
-        })
-        scalars = ee.Dictionary({
-            'LANDSAT_4': [0.0000275, 0.0000275, 0.0000275, 0.0000275,
-                          0.0000275, 0.0000275, 0.00341802, 1],
-            'LANDSAT_5': [0.0000275, 0.0000275, 0.0000275, 0.0000275,
-                          0.0000275, 0.0000275, 0.00341802, 1],
-            'LANDSAT_7': [0.0000275, 0.0000275, 0.0000275, 0.0000275,
-                          0.0000275, 0.0000275, 0.00341802, 1],
-            'LANDSAT_8': [0.0000275, 0.0000275, 0.0000275, 0.0000275, 0.0000275,
-                          0.0000275, 0.0000275, 0.00341802, 1],
-            'LANDSAT_9': [0.0000275, 0.0000275, 0.0000275, 0.0000275, 0.0000275,
-                          0.0000275, 0.0000275, 0.00341802, 1],
-        })
-        offsets = ee.Dictionary({
-            'LANDSAT_4': [-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, 149.0, 0],
-            'LANDSAT_5': [-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, 149.0, 0],
-            'LANDSAT_7': [-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, 149.0, 0],
-            'LANDSAT_8': [-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, -0.2, 149.0, 0],
-            'LANDSAT_9': [-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, -0.2, 149.0, 0],
-        })
+        input_bands = ee.Dictionary(
+            {
+                "LANDSAT_4": ["SR_B1", "SR_B2", "SR_B3", "SR_B4", "SR_B5", "SR_B7", "ST_B6", "QA_PIXEL"],
+                "LANDSAT_5": ["SR_B1", "SR_B2", "SR_B3", "SR_B4", "SR_B5", "SR_B7", "ST_B6", "QA_PIXEL"],
+                "LANDSAT_7": ["SR_B1", "SR_B2", "SR_B3", "SR_B4", "SR_B5", "SR_B7", "ST_B6", "QA_PIXEL"],
+                "LANDSAT_8": ["SR_B1", "SR_B2", "SR_B3", "SR_B4", "SR_B5", "SR_B6", "SR_B7", "ST_B10", "QA_PIXEL"],
+                "LANDSAT_9": ["SR_B1", "SR_B2", "SR_B3", "SR_B4", "SR_B5", "SR_B6", "SR_B7", "ST_B10", "QA_PIXEL"],
+            }
+        )
+        output_bands = ee.Dictionary(
+            {
+                "LANDSAT_4": ["blue", "green", "red", "nir", "swir1", "swir2", "lst", "QA_PIXEL"],
+                "LANDSAT_5": ["blue", "green", "red", "nir", "swir1", "swir2", "lst", "QA_PIXEL"],
+                "LANDSAT_7": ["blue", "green", "red", "nir", "swir1", "swir2", "lst", "QA_PIXEL"],
+                "LANDSAT_8": ["ultra_blue", "blue", "green", "red", "nir", "swir1", "swir2", "lst", "QA_PIXEL"],
+                "LANDSAT_9": ["ultra_blue", "blue", "green", "red", "nir", "swir1", "swir2", "lst", "QA_PIXEL"],
+            }
+        )
+        scalars = ee.Dictionary(
+            {
+                "LANDSAT_4": [0.0000275, 0.0000275, 0.0000275, 0.0000275, 0.0000275, 0.0000275, 0.00341802, 1],
+                "LANDSAT_5": [0.0000275, 0.0000275, 0.0000275, 0.0000275, 0.0000275, 0.0000275, 0.00341802, 1],
+                "LANDSAT_7": [0.0000275, 0.0000275, 0.0000275, 0.0000275, 0.0000275, 0.0000275, 0.00341802, 1],
+                "LANDSAT_8": [
+                    0.0000275,
+                    0.0000275,
+                    0.0000275,
+                    0.0000275,
+                    0.0000275,
+                    0.0000275,
+                    0.0000275,
+                    0.00341802,
+                    1,
+                ],
+                "LANDSAT_9": [
+                    0.0000275,
+                    0.0000275,
+                    0.0000275,
+                    0.0000275,
+                    0.0000275,
+                    0.0000275,
+                    0.0000275,
+                    0.00341802,
+                    1,
+                ],
+            }
+        )
+        offsets = ee.Dictionary(
+            {
+                "LANDSAT_4": [-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, 149.0, 0],
+                "LANDSAT_5": [-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, 149.0, 0],
+                "LANDSAT_7": [-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, 149.0, 0],
+                "LANDSAT_8": [-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, -0.2, 149.0, 0],
+                "LANDSAT_9": [-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, -0.2, 149.0, 0],
+            }
+        )
 
         prep_image = (
-            sr_image
-            .select(input_bands.get(spacecraft_id), output_bands.get(spacecraft_id))
+            sr_image.select(input_bands.get(spacecraft_id), output_bands.get(spacecraft_id))
             .multiply(ee.Image.constant(ee.List(scalars.get(spacecraft_id))))
             .add(ee.Image.constant(ee.List(offsets.get(spacecraft_id))))
         )
@@ -303,12 +318,12 @@ class Image():
         # CGM - Need to come up with a more robust approach,
         #   but this seems to work for now
         albedo = ee.Algorithms.If(
-            ee.List(['LANDSAT_8', 'LANDSAT_9']).contains(spacecraft_id),
+            ee.List(["LANDSAT_8", "LANDSAT_9"]).contains(spacecraft_id),
             landsat.albedo_l89(prep_image),
             landsat.albedo_l457(prep_image),
         )
         cloud_mask = ee.Algorithms.If(
-            ee.List(['LANDSAT_8', 'LANDSAT_9']).contains(spacecraft_id),
+            ee.List(["LANDSAT_8", "LANDSAT_9"]).contains(spacecraft_id),
             landsat.cloud_mask_C2_l89(sr_image),
             landsat.cloud_mask_C2_l457(sr_image),
         )
@@ -336,43 +351,45 @@ class Image():
 
         # Check if passing c2_lst_correct arguments
         if "c2_lst_correct" in kwargs.keys():
-            assert isinstance(kwargs['c2_lst_correct'], bool), "selection type must be a boolean"
+            assert isinstance(kwargs["c2_lst_correct"], bool), "selection type must be a boolean"
             # Remove from kwargs since it is not a valid argument for Image init
-            c2_lst_correct = kwargs.pop('c2_lst_correct')
+            c2_lst_correct = kwargs.pop("c2_lst_correct")
         else:
             c2_lst_correct = cls._C2_LST_CORRECT
 
         if c2_lst_correct:
             lst = openet.core.common.landsat_c2_sr_lst_correct(sr_image, landsat.ndvi(prep_image))
         else:
-            lst = prep_image.select(['lst'])
+            lst = prep_image.select(["lst"])
 
         # Build the input image
         # Don't compute LST since it is being provided
-        input_image = ee.Image([
-            lst.rename(['lst']),
-            landsat.ndvi(prep_image),
-            landsat.lai(prep_image),
-            landsat.savi(prep_image),
-            landsat.emissivity(prep_image),
-            landsat.ndwi(prep_image),
-            albedo,
-        ])
+        input_image = ee.Image(
+            [
+                lst.rename(["lst"]),
+                landsat.ndvi(prep_image),
+                landsat.lai(prep_image),
+                landsat.savi(prep_image),
+                landsat.emissivity(prep_image),
+                landsat.ndwi(prep_image),
+                albedo,
+            ]
+        )
 
         # Apply the cloud mask and add properties
-        input_image = (
-            input_image.updateMask(cloud_mask)
-            .set({'system:index': sr_image.get('system:index'),
-                  'system:time_start': sr_image.get('system:time_start'),
-                  'system:id': sr_image.get('system:id'),
-                  'SUN_ELEVATION': sr_image.get('SUN_ELEVATION'),
-                  })
+        input_image = input_image.updateMask(cloud_mask).set(
+            {
+                "system:index": sr_image.get("system:index"),
+                "system:time_start": sr_image.get("system:time_start"),
+                "system:id": sr_image.get("system:id"),
+                "SUN_ELEVATION": sr_image.get("SUN_ELEVATION"),
+            }
         )
 
         # Instantiate the class
         return cls(input_image, **kwargs)
 
-    def calculate(self, variables=['ndvi', 'lst', 'et', 'et_fraction']):
+    def calculate(self, variables=["ndvi", "lst", "et", "et_fraction"]):
         """Return a multiband image of calculated variables
 
         Parameters
@@ -386,61 +403,77 @@ class Image():
 
         output_images = []
         for v in variables:
-            if v.lower() == 'et':
+            if v.lower() == "et":
                 output_images.append(self.et.float())
-            elif v.lower() == 'et_fraction':
+            elif v.lower() == "et_fraction":
                 output_images.append(self.et_fraction.float())
-            elif v.lower() == 'lst':
+            elif v.lower() == "lst":
                 output_images.append(self.lst.float())
-            elif v.lower() == 'ndvi':
+            elif v.lower() == "ndvi":
                 output_images.append(self.ndvi.float())
             # CGM - Calculate method must support the mask and time bands
-            elif v.lower() == 'mask':
+            elif v.lower() == "mask":
                 output_images.append(self.mask)
-            elif v.lower() == 'time':
+            elif v.lower() == "time":
                 output_images.append(self.time)
             else:
-                raise ValueError(f'unsupported variable: {v}')
+                raise ValueError(f"unsupported variable: {v}")
 
         return ee.Image(output_images).set(self._properties)
 
     @lazy_property
-    def ndvi(self,):
+    def ndvi(
+        self,
+    ):
 
-        return self.image.select(['ndvi']).set(self._properties)
-
-    @lazy_property
-    def emissivity(self,):
-
-        return self.image.select(['emissivity']).set(self._properties)
+        return self.image.select(["ndvi"]).set(self._properties)
 
     @lazy_property
-    def ndwi(self,):
+    def emissivity(
+        self,
+    ):
 
-        return self.image.select(['ndwi']).set(self._properties)
-
-    @lazy_property
-    def lai(self,):
-
-        return self.image.select(['lai']).set(self._properties)
+        return self.image.select(["emissivity"]).set(self._properties)
 
     @lazy_property
-    def albedo(self,):
+    def ndwi(
+        self,
+    ):
 
-        return self.image.select(['albedo']).set(self._properties)
-
-    @lazy_property
-    def savi(self,):
-
-        return self.image.select(['savi']).set(self._properties)
+        return self.image.select(["ndwi"]).set(self._properties)
 
     @lazy_property
-    def lst(self,):
+    def lai(
+        self,
+    ):
 
-        return self.image.select(['lst']).set(self._properties)
+        return self.image.select(["lai"]).set(self._properties)
 
     @lazy_property
-    def et(self,):
+    def albedo(
+        self,
+    ):
+
+        return self.image.select(["albedo"]).set(self._properties)
+
+    @lazy_property
+    def savi(
+        self,
+    ):
+
+        return self.image.select(["savi"]).set(self._properties)
+
+    @lazy_property
+    def lst(
+        self,
+    ):
+
+        return self.image.select(["lst"]).set(self._properties)
+
+    @lazy_property
+    def et(
+        self,
+    ):
 
         et = model.et(
             image=self.image,
@@ -451,8 +484,8 @@ class Image():
             emissivity=self.emissivity,
             savi=self.savi,
             # lai=self.lai,
-            meteo_inst_source=self._meteorology_source_inst,
-            meteo_daily_source=self._meteorology_source_daily,
+            meteorology_source_inst=self._meteorology_source_inst,
+            meteorology_source_daily=self._meteorology_source_daily,
             elev_product=self._elev_source,
             ndvi_cold=self._ndvi_cold,
             ndvi_hot=self._ndvi_hot,
@@ -462,7 +495,9 @@ class Image():
             geometry_image=self.geometry,
             proj=self.proj,
             coords=self.coords,
-            calibration_points=self.calibration_points,
+            #et_reference = self.et_reference,
+            cold_calibration_points=self.cold_calibration_points,
+            hot_calibration_points=self.hot_calibration_points,
             max_iterations=self.max_iterations,
         )
 
@@ -497,10 +532,10 @@ class Image():
                 .select([self.et_reference_band])
             )
             et_reference_img = ee.Image(et_reference_coll.first())
-            if self.et_reference_resample in ['bilinear', 'bicubic']:
-                et_reference_img = et_reference_img.resample(self.et_reference_resample)
+            if self.et_reference_resample in ["bilinear", "bicubic"]:
+                et_reference_img = et_reference_img.reproject(self.image.projection()).resample(self.et_reference_resample)
         else:
-            raise ValueError(f'unsupported et_reference_source: {self.et_reference_source}')
+            raise ValueError(f"unsupported et_reference_source: {self.et_reference_source}")
 
         if self.et_reference_factor:
             et_reference_img = et_reference_img.multiply(self.et_reference_factor)
@@ -510,36 +545,36 @@ class Image():
         #   input image.  Not all models may want this though.
         # Note, doing this will cause the reference ET to be cloud masked.
         # CGM - Should the output band name match the input ETr band name?
-        return self.ndvi.multiply(0).add(et_reference_img)\
-            .rename(['et_reference']).set(self._properties)
-
+        return et_reference_img.rename(['et_reference']).set(self._properties)
+    
     @lazy_property
     def et_fraction(self):
         """Fraction of reference ET (equivalent to the Kc)"""
-        return (
-            self.et.divide(self.et_reference)
-            .rename(['et_fraction']).set(self._properties)
-        )
+        return self.et.divide(self.et_reference).rename(["et_fraction"]).set(self._properties)
 
     # CGM - The mask band is currently needed for the time band
     # If the model does not do any additional masking we might be able to
     #   build the mask from the NDVI or QA band instead.
     @lazy_property
-    def mask(self,):
+    def mask(
+        self,
+    ):
         """Mask of all active pixels (based on the final et)"""
-        return (
-            self.et.multiply(0).add(1).updateMask(1).uint8()
-            .rename(['mask']).set(self._properties)
-        )
+        return self.et.multiply(0).add(1).updateMask(1).uint8().rename(["mask"]).set(self._properties)
 
     # CGM - The image class must have a "time" method for the interpolation
     # I'm not sure if it needs to be built from the active pixels mask
     #   or could be built from the NDVI or QA band instead.
     @lazy_property
-    def time(self,):
+    def time(
+        self,
+    ):
         """Return an image of the 0 UTC time (in milliseconds)"""
 
         return (
-            self.mask.double().multiply(0).add(utils.date_to_time_0utc(self._date))
-            .rename(['time']).set(self._properties)
+            self.mask.double()
+            .multiply(0)
+            .add(utils.date_to_time_0utc(self._date))
+            .rename(["time"])
+            .set(self._properties)
         )
