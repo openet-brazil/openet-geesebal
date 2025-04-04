@@ -387,3 +387,24 @@ def cloud_mask_C2_l89(landsat_image):
     mask = c01.Or(c02)
 
     return mask
+
+
+def ocean_mask(landsat_image):
+
+    #osm_water = ee.ImageCollection('projects/sat-io/open-datasets/OSM_waterLayer')
+    copernicus_ocean_mask = ee.ImageCollection("COPERNICUS/DEM/GLO30")
+    #def tile_prep(img): 
+    #    return img.unmask().eq(1).Not()
+    
+    #ocean_mask = osm_water.map(tile_prep).mosaic().unmask()
+    ocean_mask = copernicus_ocean_mask.filterBounds(landsat_image.geometry())\
+                                       .select('WBM').mean().eq(1).unmask(1).Not()
+
+    #Apply a little bit of filtering to get rid of some of the smallest pixels
+    ocean_mask = ocean_mask\
+    .reduceNeighborhood(ee.Reducer.min(), ee.Kernel.circle(radius=2, units='pixels'))\
+    .reduceNeighborhood(ee.Reducer.max(), ee.Kernel.circle(radius=2, units='pixels'))\
+    .reproject('EPSG:4326', [0.0008333333333333334, 0, -180,0, -0.0008333333333333334, 90])
+
+
+    return ocean_mask

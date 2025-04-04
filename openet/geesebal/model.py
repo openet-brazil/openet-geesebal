@@ -153,13 +153,13 @@ def et(
         rad_inst = radiation_inst(elev, lst, emissivity, albedo, tair, rh, rso_inst, sun_elevation, cos_zn)
 
         # Instantaneous soil heat flux [W m-2]
-        g_inst = soil_heat_flux(rad_inst, ndvi, albedo, lst_dem, ndwi)
+        g_inst = soil_heat_flux(rad_inst, ndvi, albedo, lst, ndwi)
 
         # Daily ney radiation [W m-2]
         rad_24h = radiation_24h(time_start, tmax, tmin, elev, sun_elevation, cos_zn, rso24h)
 
         # Cold pixel for wet conditions repretation of the image
-        cold_pixels = cold_pixel(albedo, ndvi, ndwi, lst_dem, top_ndvi, coldest_lst,
+        cold_pixels = cold_pixel(albedo, ndvi, ndwi, lst, top_ndvi, coldest_lst,
                                         geometry_image, coords, proj, elev, cold_calibration_points)
         # Hot pixel
         hot_pixels = fexp_hot_pixel(time_start, albedo, ndvi, ndwi, lst,lst_dem, rad_inst,
@@ -168,7 +168,7 @@ def et(
         # Instantaneous sensible heat flux [W m-2]
         h_inst = sensible_heat_flux(savi, ux, cold_pixels, hot_pixels, lst_dem, lst,
                                         elev, geometry_image, max_iterations)
-        
+    
         # Checking if H was estimated, otherwise return a nodata mask
         h_cond = ee.Number(cold_pixels.size()).eq(0).Or(ee.Number(hot_pixels.size()).eq(0))
 
@@ -943,7 +943,7 @@ def cold_pixel(
                 scale=30,
                 dropNulls=True,
                 geometries=True,
-            )
+            ).sort('lst_nw',True)
 
     # Checkin if there are at least 1 pixel found as cold pixel
     minimum_cold_pixels = 1 #3000
@@ -1271,7 +1271,6 @@ def fexp_hot_pixel(
         .reduceRegion(reducer=ee.Reducer.percentile([lst_hot]), geometry=geometry_image, scale=30, maxPixels=1e9)
         .combine(ee.Dictionary({"lst_neg": 350}), overwrite=False)
     )
-
     # Get low lst value
     perc_top_lst_value = ee.Number(perc_top_lst.get("lst_neg"))
 
@@ -1303,7 +1302,7 @@ def fexp_hot_pixel(
                 scale=30,
                 dropNulls=True,
                 geometries=True,
-            )
+            ).sort('lst_nw',False)
     
     # Checkin if there are at least 1 pixel found as cold pixel
     minimum_cold_pixels = 1 #3000
@@ -1402,10 +1401,10 @@ def sensible_heat_flux(
     # LL : Values less than 1.5 m s-1 tend to generate instability in
     # the iterative process to estimate aerodynamic resistance.
     # Standard Deviation is added in this situations.
-    ux = ux.where(ux.lt(1.5), ux.add(wind_speed_std_value))
+    ux = ux.max(1.5) #where(ux.lt(1.5), ux.add(wind_speed_std_value))
 
     # Slope/ Aspect
-    #slope_aspect = ee.Terrain.products(dem)
+    slope_aspect = ee.Terrain.products(dem)
 
     # Momentum roughness length at the weather station. (Allen2002 Eqn 28)
     zom_first_approach = veg_height.multiply(0.123)
@@ -1414,7 +1413,7 @@ def sensible_heat_flux(
     # TODO: LL - We need to change this approach
     ustar_station = lst.expression("(k_constant * ux) / log(zx / zom)", {
                 "k_constant": k_constant, "zx": zx, "zom": zom_first_approach, "ux": ux})
-
+    
     # Wind speed at blending height at the weather station.  (Allen2002 Eqn 29)
     u200 = lst.expression(
         "ustar_station * log(blending_height / zom) / k_constant",{
@@ -1422,8 +1421,8 @@ def sensible_heat_flux(
                 "zom": zom_first_approach, "k_constant": k_constant})
 
     # Momentum roughness length for each pixel.
-    #zom = lst.expression('exp((5.62 * savi) - 5.809)', {'savi': savi})
-    zom = veg_height.multiply(0.123)
+    zom = lst.expression('exp((5.62 * savi) - 5.809)', {'savi': savi})
+    #zom = veg_height.multiply(0.123)
 
     # Momentum roughness slope/aspect Correction.  (Allen2002  A12 Eqn9)
     #zom = zom.expression(
@@ -1448,7 +1447,7 @@ def sensible_heat_flux(
 
             # Lst hot pixel value
             ts_hot_pixel = ee.Number(hot_pixel.get("lst")).subtract(ee.Number(hot_pixel.get("tfac")))
-            #n_Ts_true_hot = ee.Number(hot_pixel.get("lst"))
+            n_Ts_true_hot = ee.Number(hot_pixel.get("lst"))
 
             # G inst hot pixel value
             g_inst_hot = ee.Number(hot_pixel.get("g_inst"))
@@ -1530,7 +1529,7 @@ def sensible_heat_flux(
                             "ro_hot": ro_hot,
                             "cp": cp,
                             "ustar_hot": ustart_hot,
-                            "ts_hot_pixel": ts_hot_pixel,
+                            "ts_hot_pixel": n_Ts_true_hot,
                             "h_inst_hot": h_inst_hot,
                         },
                     
@@ -1631,11 +1630,11 @@ def sensible_heat_flux(
 
             return ee.Feature(None, {"a": coef_a, "b": coef_b})
 
-        return fc_hot_pixels.toList(100).map(map_hot)
+        return fc_hot_pixels.toList(1).map(map_hot)
 
 
     # list length
-    list_length = 100
+    list_length = 1
 
     # Dictionary with the results
     dict_linear_coeffs = ee.FeatureCollection(fc_cold_pixels.toList(list_length).map(map_cold).flatten())
@@ -1680,7 +1679,7 @@ def sensible_heat_flux(
         # Monin Obukov length [m]
         mo_l = img.expression(
             "-(ro*cp*(ustar**3)*lst)/(0.41*9.81*h_inst)",
-            {"ro": ro, "cp": cp, "ustar": img.select("ustar"), "lst": lst, "h_inst": h_inst},
+            {"ro": ro, "cp": cp, "ustar": img.select("ustar"), "lst": lst_dem, "h_inst": h_inst},
         ).rename("ustar")
 
         # Filtering L to avoi numerical instability
@@ -1738,7 +1737,7 @@ def sensible_heat_flux(
     # First approximation of Friction velocity [s/m]
     ustar = lst.expression(
         "(k_constant *u200) /(log(height/zom))", {
-            "u200": u200, "height": blending_height, "zom": zom_first_approach, "k_constant": k_constant}
+            "u200": u200, "height": blending_height, "zom": zom, "k_constant": k_constant}
     ).rename("ustar")
 
     # First approcimation of aerodynamic resistance [s/m]
@@ -1846,4 +1845,3 @@ def et_fraction(time_start, et, et_reference_source, et_reference_band, et_refer
     et_fraction = et.divide(et_reference_img).rename("et_fraction")
 
     return et_fraction
-
