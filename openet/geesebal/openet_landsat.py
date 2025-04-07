@@ -389,22 +389,37 @@ def cloud_mask_C2_l89(landsat_image):
     return mask
 
 
-def ocean_mask(landsat_image):
+def water_mask(product='GLO'):
+    """Water maskfor precomputing
 
-    #osm_water = ee.ImageCollection('projects/sat-io/open-datasets/OSM_waterLayer')
-    copernicus_ocean_mask = ee.ImageCollection("COPERNICUS/DEM/GLO30")
-    #def tile_prep(img): 
-    #    return img.unmask().eq(1).Not()
-    
-    #ocean_mask = osm_water.map(tile_prep).mosaic().unmask()
-    ocean_mask = copernicus_ocean_mask.filterBounds(landsat_image.geometry())\
-                                       .select('WBM').mean().eq(1).unmask(1).Not()
+    Parameters
+    ----------
+    product : string
+        Product name. 
+            GLO: Water mask from the Copernicus GLO DEM.
+            OSM: Water mask from OpenStreetMap.
 
-    #Apply a little bit of filtering to get rid of some of the smallest pixels
-    ocean_mask = ocean_mask\
-    .reduceNeighborhood(ee.Reducer.min(), ee.Kernel.circle(radius=2, units='pixels'))\
-    .reduceNeighborhood(ee.Reducer.max(), ee.Kernel.circle(radius=2, units='pixels'))\
-    .reproject('EPSG:4326', [0.0008333333333333334, 0, -180,0, -0.0008333333333333334, 90])
+    Returns
+    -------
+    ee.Image
 
+    Notes
+    -----
+   
 
-    return ocean_mask
+    References
+    ----------
+    GLO 30 DGED: https://doi.org/10.5270/ESA-c5d3d65 
+    OSM: https://gee-community-catalog.org/projects/osm_water/
+
+    """
+    if product =='GLO':
+
+        water_mask = ee.Image('projects/openet/assets/features/water_mask_glo30_0p001')
+
+    elif product =='OSM':
+
+        water_mask = ee.Image('projects/openet/assets/features/water_mask_osm_0p001')
+
+        
+    return water_mask
