@@ -387,3 +387,39 @@ def cloud_mask_C2_l89(landsat_image):
     mask = c01.Or(c02)
 
     return mask
+
+
+def water_mask(product='GLO'):
+    """Water maskfor precomputing
+
+    Parameters
+    ----------
+    product : string
+        Product name. 
+            GLO: Water mask from the Copernicus GLO DEM.
+            OSM: Water mask from OpenStreetMap.
+
+    Returns
+    -------
+    ee.Image
+
+    Notes
+    -----
+   
+
+    References
+    ----------
+    GLO 30 DGED: https://doi.org/10.5270/ESA-c5d3d65 
+    OSM: https://gee-community-catalog.org/projects/osm_water/
+
+    """
+    if product =='GLO':
+
+        water_mask = ee.Image('projects/openet/assets/features/water_mask_glo30_0p001')
+
+    elif product =='OSM':
+
+        water_mask = ee.Image('projects/openet/assets/features/water_mask_osm_0p001')
+
+        
+    return water_mask

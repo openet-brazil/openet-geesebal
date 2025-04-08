@@ -153,13 +153,13 @@ def et(
         rad_inst = radiation_inst(elev, lst, emissivity, albedo, tair, rh, rso_inst, sun_elevation, cos_zn)
 
         # Instantaneous soil heat flux [W m-2]
-        g_inst = soil_heat_flux(rad_inst, ndvi, albedo, lst_dem, ndwi)
+        g_inst = soil_heat_flux(rad_inst, ndvi, albedo, lst, ndwi)
 
         # Daily ney radiation [W m-2]
         rad_24h = radiation_24h(time_start, tmax, tmin, elev, sun_elevation, cos_zn, rso24h)
 
         # Cold pixel for wet conditions repretation of the image
-        cold_pixels = cold_pixel(albedo, ndvi, ndwi, lst_dem, top_ndvi, coldest_lst,
+        cold_pixels = cold_pixel(albedo, ndvi, ndwi, lst, top_ndvi, coldest_lst,
                                         geometry_image, coords, proj, elev, cold_calibration_points)
         # Hot pixel
         hot_pixels = fexp_hot_pixel(time_start, albedo, ndvi, ndwi, lst,lst_dem, rad_inst,
@@ -168,7 +168,7 @@ def et(
         # Instantaneous sensible heat flux [W m-2]
         h_inst = sensible_heat_flux(savi, ux, cold_pixels, hot_pixels, lst_dem, lst,
                                         elev, geometry_image, max_iterations)
-        
+    
         # Checking if H was estimated, otherwise return a nodata mask
         h_cond = ee.Number(cold_pixels.size()).eq(0).Or(ee.Number(hot_pixels.size()).eq(0))
 
@@ -557,21 +557,21 @@ def tao_sw(dem, tair, rh, sun_elevation, cos_zn):
     sin_zn = sun_elevation.multiply(DEG2RAD).sin()
 
     # Solar zenith angle over a horizontal surface
-    #solar_zenith = ee.Number(90).subtract(sun_elevation)
+    solar_zenith = ee.Number(90).subtract(sun_elevation)
 
-    #solar_zenith_radians = solar_zenith.multiply(DEG2RAD)
+    solar_zenith_radians = solar_zenith.multiply(DEG2RAD)
     # Cos only in flat areas
-    # cos_theta = solar_zenith_radians.cos()
+    cos_theta = solar_zenith_radians.cos()
 
     # Broad-band atmospheric transmissivity (ASCE-EWRI (2005))
-    #tao_sw_img = pres.expression(
-    #    "0.35 + 0.627 * exp(((-0.00146 * P) / (Kt * ct)) - (0.075 * (W / ct) ** 0.4))",
-    #    {"P": pres, "W": w, "Kt": 1.0, "ct": cos_zn},
-    #)
     tao_sw_img = pres.expression(
         "0.35 + 0.627 * exp(((-0.00146 * P) / (Kt * ct)) - (0.075 * (W / ct) ** 0.4))",
-        {"P": pres, "W": w, "Kt": 1.0, "ct": sin_zn},
+       {"P": pres, "W": w, "Kt": 1.0, "ct": cos_zn},
     )
+    #tao_sw_img = pres.expression(
+    #    "0.35 + 0.627 * exp(((-0.00146 * P) / (Kt * ct)) - (0.075 * (W / ct) ** 0.4))",
+    #   {"P": pres, "W": w, "Kt": 1.0, "ct": cos_terrain},
+    #)
 
     return tao_sw_img.rename("tao_sw")
 
@@ -943,7 +943,7 @@ def cold_pixel(
                 scale=30,
                 dropNulls=True,
                 geometries=True,
-            )
+            ).sort('lst_nw',True)
 
     # Checkin if there are at least 1 pixel found as cold pixel
     minimum_cold_pixels = 1 #3000
@@ -1271,7 +1271,6 @@ def fexp_hot_pixel(
         .reduceRegion(reducer=ee.Reducer.percentile([lst_hot]), geometry=geometry_image, scale=30, maxPixels=1e9)
         .combine(ee.Dictionary({"lst_neg": 350}), overwrite=False)
     )
-
     # Get low lst value
     perc_top_lst_value = ee.Number(perc_top_lst.get("lst_neg"))
 
@@ -1303,7 +1302,7 @@ def fexp_hot_pixel(
                 scale=30,
                 dropNulls=True,
                 geometries=True,
-            )
+            ).sort('lst_nw',False)
     
     # Checkin if there are at least 1 pixel found as cold pixel
     minimum_cold_pixels = 1 #3000
@@ -1402,10 +1401,10 @@ def sensible_heat_flux(
     # LL : Values less than 1.5 m s-1 tend to generate instability in
     # the iterative process to estimate aerodynamic resistance.
     # Standard Deviation is added in this situations.
-    ux = ux.where(ux.lt(1.5), ux.add(wind_speed_std_value))
+    #ux = ux.max(1.5) #where(ux.lt(1.5), ux.add(wind_speed_std_value))
 
     # Slope/ Aspect
-    #slope_aspect = ee.Terrain.products(dem)
+    slope_aspect = ee.Terrain.products(dem)
 
     # Momentum roughness length at the weather station. (Allen2002 Eqn 28)
     zom_first_approach = veg_height.multiply(0.123)
@@ -1414,7 +1413,7 @@ def sensible_heat_flux(
     # TODO: LL - We need to change this approach
     ustar_station = lst.expression("(k_constant * ux) / log(zx / zom)", {
                 "k_constant": k_constant, "zx": zx, "zom": zom_first_approach, "ux": ux})
-
+    
     # Wind speed at blending height at the weather station.  (Allen2002 Eqn 29)
     u200 = lst.expression(
         "ustar_station * log(blending_height / zom) / k_constant",{
@@ -1422,14 +1421,14 @@ def sensible_heat_flux(
                 "zom": zom_first_approach, "k_constant": k_constant})
 
     # Momentum roughness length for each pixel.
-    #zom = lst.expression('exp((5.62 * savi) - 5.809)', {'savi': savi})
-    zom = veg_height.multiply(0.123)
+    zom = lst.expression('exp((5.62 * savi) - 5.809)', {'savi': savi})
+    #zom = veg_height.multiply(0.123)
 
     # Momentum roughness slope/aspect Correction.  (Allen2002  A12 Eqn9)
-    #zom = zom.expression(
-    #     'zom * (1 + (slope - 5) / 20)',
-    #     {'zom': zom, 'slope': slope_aspect.select('slope')}
-    #)
+    zom = zom.expression(
+         'zom * (1 + (slope - 5) / 20)',
+         {'zom': zom, 'slope': slope_aspect.select('slope')}
+    )
 
     # Finding the a and b coefficients of  dt = a+bTs equation
     def map_cold(cold):
@@ -1448,7 +1447,7 @@ def sensible_heat_flux(
 
             # Lst hot pixel value
             ts_hot_pixel = ee.Number(hot_pixel.get("lst")).subtract(ee.Number(hot_pixel.get("tfac")))
-            #n_Ts_true_hot = ee.Number(hot_pixel.get("lst"))
+            n_Ts_true_hot = ee.Number(hot_pixel.get("lst"))
 
             # G inst hot pixel value
             g_inst_hot = ee.Number(hot_pixel.get("g_inst"))
@@ -1496,7 +1495,7 @@ def sensible_heat_flux(
             )
 
             # Filtering minimum value 
-            u200_hot = u200_hot.max(ee.Number(4))
+            #u200_hot = u200_hot.max(ee.Number(4))
 
             # Aerodynamic resistance at hot pixel [s m-1]
             rah_hot = ustar_hot.expression(
@@ -1530,14 +1529,14 @@ def sensible_heat_flux(
                             "ro_hot": ro_hot,
                             "cp": cp,
                             "ustar_hot": ustart_hot,
-                            "ts_hot_pixel": ts_hot_pixel,
+                            "ts_hot_pixel": n_Ts_true_hot,
                             "h_inst_hot": h_inst_hot,
                         },
                     
                 ))
 
                 # Filtering minimum value 
-                l_hot = l_hot.max(ee.Number(-1000))
+                #l_hot = l_hot.max(ee.Number(-1000))
 
                 # Momentum and heat transport 
                 # Stable conditions (l > 0)
@@ -1629,17 +1628,19 @@ def sensible_heat_flux(
              #   geometry=hot_pixel.geometry()
             #).getNumber('a')
 
-            return ee.Feature(None, {"a": coef_a, "b": coef_b})
+            # TODO: Added more variable only for debugging purpose (LL)
 
-        return fc_hot_pixels.toList(100).map(map_hot)
+            return ee.Feature(None, {"a": coef_a, "b": coef_b,'dt_hot':dT_hot,'rah_hot':rah_hot,'cold_pixel':ts_cold_pixel,'hot_pixel':ts_hot_pixel})
+
+        return fc_hot_pixels.toList(10).map(map_hot)
 
 
     # list length
-    list_length = 100
+    list_length = 10
 
     # Dictionary with the results
     dict_linear_coeffs = ee.FeatureCollection(fc_cold_pixels.toList(list_length).map(map_cold).flatten())
-
+    
     # Coefs lists
     coeff_a_list = dict_linear_coeffs.aggregate_array("a")
     coeff_b_list = dict_linear_coeffs.aggregate_array("b")
@@ -1670,21 +1671,27 @@ def sensible_heat_flux(
     # Iterative function to define rah and ustar
     def iterative_img(empty, img):
 
-        img = ee.Image(img)
+        previous = ee.Image(ee.List(img).get(-1))
 
+        # Aerodynamic resistance 
+        rah_previous = previous.select('rah')
+
+        # Friction velocity
+        ustar_previous = previous.select('ustar')
+        
         # Sensible heat flux [W m-2]
-        h_inst = img.expression(
-            "(ro*cp*dt)/rah", {"ro": ro, "cp": cp, "dt": dt, "rah": img.select("rah")}
+        h_inst = previous.expression(
+            "(ro*cp*dt)/rah", {"ro": ro, "cp": cp, "dt": dt, "rah": rah_previous}
         ).rename("h_inst")
         
         # Monin Obukov length [m]
-        mo_l = img.expression(
+        mo_l = previous.expression(
             "-(ro*cp*(ustar**3)*lst)/(0.41*9.81*h_inst)",
-            {"ro": ro, "cp": cp, "ustar": img.select("ustar"), "lst": lst, "h_inst": h_inst},
-        ).rename("ustar")
+            {"ro": ro, "cp": cp, "ustar": ustar_previous, "lst": lst_dem, "h_inst": h_inst},
+        ).rename("mo")
 
         # Filtering L to avoi numerical instability
-        mo_l = mo_l.max(-1000)
+        #mo_l = mo_l.max(-1000)
 
         # Momentum and heat transport 
         # Stable conditions (mo_l > 0)
@@ -1719,7 +1726,7 @@ def sensible_heat_flux(
         psih_01 = psih_01.where(mo_l.eq(0), 0)
 
         # Friction velocity [s/m]
-        ustar = img.expression(
+        ustar = previous.expression(
             "(u200*0.41)/(log(height/zom)-psim_200)",
             {"u200": u200, "height": blending_height, "zom": zom, "psim_200": psim_200},
         )
@@ -1728,31 +1735,33 @@ def sensible_heat_flux(
         ustar = ustar.max(0.02).rename('ustar')  #where(u_star.lt(0.02), 0.02).rename("u_fr")
 
         # Aerodynamic resistance to heat transport [s/m]
-        rah = img.expression(
+        rah = previous.expression(
             "(log(z2/z1)-psi_h2+psi_h01)/(ustar*0.41)",
             {"z2": z2, "z1": z1, "ustar": ustar, "psi_h2": psih_2, "psi_h01": psih_01},
         ).rename("rah")
+       
+        current = ee.Image.cat([rah, ustar,mo_l])
 
-        return ee.Image.cat([ustar, rah])
+        return ee.List(img).add(current)
 
     # First approximation of Friction velocity [s/m]
     ustar = lst.expression(
         "(k_constant *u200) /(log(height/zom))", {
-            "u200": u200, "height": blending_height, "zom": zom_first_approach, "k_constant": k_constant}
+            "u200": u200, "height": blending_height, "zom": zom, "k_constant": k_constant}
     ).rename("ustar")
 
     # First approcimation of aerodynamic resistance [s/m]
     rah = lst.expression("(log(z2/z1))/(ustar*0.41)", {"z2": z2, "z1": z1, "ustar": ustar}).rename("rah")
 
     # Preparing for the iteration stability process
-    rah_ustar = ee.Image.cat([ustar, rah])
+    rah_ustar = ee.Image.cat([ustar, rah,ee.Image.constant(0).float().rename('mo')])
 
     # Get corrected aerodynamic resitance and velocity friction
-    rah_ustart_corr = ee.Image(iterations.iterate(iterative_img, rah_ustar))
+    rah_ustar_corr = ee.List(iterations.iterate(iterative_img, ee.List([rah_ustar])))
 
     # Final Sensible Heat estimation [W/m2]
     h_inst = lst.expression(
-        "(ro*cp*dt)/rah", {"ro": ro, "cp": cp, "dt": dt, "rah": rah_ustart_corr.select("rah")}
+        "(ro*cp*dt)/rah", {"ro": ro, "cp": cp, "dt": dt, "rah": ee.Image(ee.List(rah_ustar_corr.get(max_iterations))).select("rah")}
     ).rename("h_inst")
 
     return h_inst.rename("h_inst")
@@ -1846,4 +1855,3 @@ def et_fraction(time_start, et, et_reference_source, et_reference_band, et_refer
     et_fraction = et.divide(et_reference_img).rename("et_fraction")
 
     return et_fraction
-

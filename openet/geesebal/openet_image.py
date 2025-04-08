@@ -327,6 +327,9 @@ class Image:
             landsat.cloud_mask_C2_l89(sr_image),
             landsat.cloud_mask_C2_l457(sr_image),
         )
+
+        # Water mask
+        water_mask = landsat.water_mask(product='GLO')
         # albedo = ee.Algorithms.If(
         #     spacecraft_id.compareTo(ee.String('LANDSAT_8')),
         #     landsat.albedo_l457(prep_image),
@@ -377,7 +380,7 @@ class Image:
         )
 
         # Apply the cloud mask and add properties
-        input_image = input_image.updateMask(cloud_mask).set(
+        input_image = input_image.updateMask(cloud_mask).updateMask(water_mask.Not()).set(
             {
                 "system:index": sr_image.get("system:index"),
                 "system:time_start": sr_image.get("system:time_start"),
