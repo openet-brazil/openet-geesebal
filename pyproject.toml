@@ -1,10 +1,6 @@
 [project]
 name = "openet-geesebal"
-<<<<<<< HEAD
-version = "0.4.1"
-=======
 version = "0.4.0"
->>>>>>> 5cb91ba6e0ab74d6f25c6dfb61a0ebed24623a7b
 authors = [
     { name = "Anderson Ruhoff", email = "andersonruhoff@gmail.com" },
     { name = "Leonardo Laipelt", email = "leolaipelt@gmail.com" },
@@ -17,7 +13,7 @@ authors = [
 # ]
 description = "Earth Engine implementation of the GEESEBAL model"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 keywords = ["GEESEBAL", "OpenET", "Earth Engine", "Evapotranspiration", "Landsat"]
 license = {file = "LICENSE"}
 # license = {text = "MIT"}
@@ -27,18 +23,14 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "earthengine-api >= 0.1.367",
-    "openet-core >= 0.4.0",
+    "earthengine-api >= 1.5.2",
+    "openet-core >= 0.7.0",
     # "openet-refet-gee >= 0.2.0",
     # "python-dateutil",
 ]
 
 [project.urls]
 "Homepage" = "https://github.com/et-brasil/openet-geesebal"
-# "Repository" = "https://github.com/et-brasil/openet-geesebal.git"
-# "Documentation" = "https://github.com/et-brasil/openet-geesebal"
-# "Bug Tracker" = "https://github.com/et-brasil/openet-geesebal"
-# "Changelog" = "https://github.com/et-brasil/openet-geesebal"
 
 [build-system]
 requires = ["setuptools>=61.0"]
