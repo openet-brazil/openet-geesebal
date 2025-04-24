@@ -152,6 +152,7 @@ def et(
     try:
         # Air temperature correction [K]
         tair_dem = tair_dem_correction(tmin, tmax, elev)
+
         # Land surface temperature correction [K]
         lst_dem = lst_correction(time_start, lst, elev, tair_dem, rh, sun_elevation,
                                                     hour, minutes, coords, geometry_image)
@@ -163,21 +164,25 @@ def et(
         
         # Daily ney radiation [W m-2]
         rad_24h = radiation_24h(time_start, tmax, tmin, elev, sun_elevation, cos_zt, rso24h)
+
         # Cold pixel for wet conditions repretation of the image
         cold_pixels = cold_pixel(albedo, ndvi, ndwi, lst, top_ndvi, coldest_lst,
                                         geometry_image, coords, proj, elev, month, year, cold_calibration_points)
         # Hot pixel
-        hot_pixels = fexp_hot_pixel(time_start, albedo, ndvi, ndwi, lst,lst_dem, rad_inst,
+        hot_pixels = hot_pixel(time_start, albedo, ndvi, ndwi, lst,lst_dem, rad_inst,
                                         g_inst, tair, ux_clamp, lowest_ndvi, hottest_lst, geometry_image,
                                             coords, proj, elev, month, year, tfac, hot_calibration_points)
         # Instantaneous sensible heat flux [W m-2]
         h_inst = sensible_heat_flux(savi, ux_clamp, cold_pixels, hot_pixels, lst_dem, lst,
                                         elev, geometry_image, max_iterations)
+        
         # Checking if H was estimated, otherwise return a nodata mask
         h_cond = ee.Number(cold_pixels.size()).eq(0).Or(ee.Number(hot_pixels.size()).eq(0))
+
         h_inst = ee.Image(ee.Algorithms.If(h_cond.eq(1),
                                         ee.Image.constant(0).updateMask(0),
                                         h_inst)).rename("h_inst")
+        
         # Daily evapotranspiration [mm day-1]
         et_24hr = daily_et(h_inst, g_inst, rad_inst, lst_dem, rad_24h)
 
@@ -560,14 +565,14 @@ def tao_sw(dem, tair, rh, sun_elevation, cos_z0):
     w = ea.expression("(0.14 * EA * PATM) + 2.1", {"PATM": pres, "EA": ea})
 
     # Solar angle
-    sin_zn = sun_elevation.multiply(DEG2RAD).sin()
+    #sin_zn = sun_elevation.multiply(DEG2RAD).sin()
 
     # Solar zenith angle over a horizontal surface
-    solar_zenith = ee.Number(90).subtract(sun_elevation)
+    #solar_zenith = ee.Number(90).subtract(sun_elevation)
 
-    solar_zenith_radians = solar_zenith.multiply(DEG2RAD)
+    #solar_zenith_radians = solar_zenith.multiply(DEG2RAD)
     # Cos only in flat areas
-    cos_theta = solar_zenith_radians.cos()
+    #cos_theta = solar_zenith_radians.cos()
 
     # Broad-band atmospheric transmissivity (ASCE-EWRI (2005))
     tao_sw_img = pres.expression(
@@ -728,8 +733,9 @@ def lst_correction(time_start, lst, dem, tair, rh, sun_elevation, hour, minutes,
 
     References
     ----------
-    TODO: Add full Zaafar and Farah 2020 reference here
-
+    Jaafar, H.H., Ahmad, F.A., 2019. Time series trends of Landsat-based ET using automated
+    calibration in METRIC and SEBAL: The Bekaa Valley, Lebanon. Remote Sens.
+    Environ. https://doi.org/https://doi.org/10.1016/j.rse.2018.12.033. 
     """
     # Solar constant [W m-2]
     gsc = ee.Image.constant(1367)
@@ -825,19 +831,19 @@ def lc_mask(month, year, geometry_image, mask_img):
     crop2 = crop2.where(crop2, 1).unmask(0)
 
     # Land cover mask - total croplands
-    # CGM - Should probably rename to something different than the function name
-    lc_mask = crop1.add(crop2)
+    landcover_mask = crop1.add(crop2)
 
-    lc_mask = lc_mask.updateMask(lc_mask.eq(1))
+    landcover_mask = landcover_mask.updateMask(landcover_mask.eq(1))
 
     # Check if there are more than 3000 pixels in the land cover masks
     # otherwise land cover mask is not applied (return a full scene mask)
-    count_land_cover_pixels = lc_mask.rename('land_cover_pixels')\
+    count_land_cover_pixels = landcover_mask.rename('land_cover_pixels')\
         .reduceRegion(reducer=ee.Reducer.count(), scale=30,
                       geometry=geometry_image, maxPixels=10e14)
+    
     n_count_lc = ee.Number(count_land_cover_pixels.get('land_cover_pixels'))
 
-    mask = ee.Algorithms.If(n_count_lc.gte(3000), lc_mask, mask_img)
+    mask = ee.Algorithms.If(n_count_lc.gte(3000), landcover_mask, mask_img)
 
     mask = ee.Algorithms.If(isWinter.eq(1), mask_img, mask)
     # mask = landsat_image.select(0).updateMask(1)
@@ -1254,7 +1260,7 @@ def radiation_24h(time_start, tmax, tmin, elev, sun_elevation, cos_terrain, rso2
     return rn.rename("rad_24h")
 
 
-def fexp_hot_pixel(
+def hot_pixel(
     time_start,
     albedo,
     ndvi,
@@ -1472,7 +1478,7 @@ def sensible_heat_flux(
 
     """
     # Number of iterations to correct for instability
-    iterations = ee.List.repeat(1, max_iterations)
+    #iterations = ee.List.repeat(1, max_iterations)
 
     # Vegetation height [m]
     n_veg_height = ee.Number(0.5)
@@ -1553,7 +1559,7 @@ def sensible_heat_flux(
     n_H_hot = ee.Number(n_Rn_hot).subtract(ee.Number(n_G_hot))
     n = ee.Number(1)
     n_dif = ee.Number(1)
-    n_dif_min = ee.Number(0.1)
+    #n_dif_min = ee.Number(0.1)
     list_dif = ee.List([])
     list_dT_hot = ee.List([])
     list_rah_hot = ee.List([])
