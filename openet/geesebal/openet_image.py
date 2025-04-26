@@ -90,9 +90,9 @@ class Image:
                 Reference ET resampling.  The default is None which is
                 equivalent to nearest neighbor resampling.
             cold_calibration_points : int
-                Number of cold calibration points (the default is 10).
+                Number of cold calibration points (the default is 1).
             hot_calibration_points : int
-                Number of hot calibration points (the default is 10).
+                Number of hot calibration points (the default is 1).
             max_iterations : int
                 Maximum number of iterations (the default is 15).
 
@@ -179,11 +179,11 @@ class Image:
         try:
             self.cold_calibration_points = kwargs["cold_calibration_points"]
         except:
-            self.cold_calibration_points = 10
+            self.cold_calibration_points = 1
         try:
             self.hot_calibration_points = kwargs["hot_calibration_points"]
         except:
-            self.hot_calibration_points = 10
+            self.hot_calibration_points = 1
 
         try:
             self.max_iterations = kwargs["max_iterations"]
