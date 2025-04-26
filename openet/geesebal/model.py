@@ -73,9 +73,9 @@ def et(
     coords : ee.Image
         Landsat image Latitude and longitude.
     cold_calibration_points : int
-        Number of cold pixel calibration points (the default is 10).
+        Number of cold pixel calibration points (the default is 1).
     hot_calibration_points : int
-        Number of hot pixel calibration points (the default is 10).
+        Number of hot pixel calibration points (the default is 1).
     max_iterations : int
         Maximum number of iterations (the default is 15).
 
@@ -94,8 +94,8 @@ def et(
 
     """
     # Fixed calibration points
-    cold_calibration_points=1
-    hot_calibration_points=1
+    cold_calibration_points = 1
+    hot_calibration_points = 1
 
     # Image properties
     date = ee.Date(time_start)
@@ -933,7 +933,7 @@ def cold_pixel(
     dem : ee.Image
         Elevation data [m].
     calibration_points : int
-        Number of calibration points (the default is 10).
+        Number of calibration points (the default is 1).
 
     Returns
     -------
@@ -1313,7 +1313,7 @@ def hot_pixel(
     proj : ee.Dictionary
         Landsat image projection.
     calibration_points : int
-        Number of calibration points (the default is 10).
+        Number of calibration points (the default is 1).
 
     Returns
     -------
