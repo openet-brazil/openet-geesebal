@@ -10,6 +10,7 @@ DEG2RAD = math.pi / 180.0
 
 def et(
     image,
+    lai,
     ndvi,
     ndwi,
     lst,
@@ -73,9 +74,9 @@ def et(
     coords : ee.Image
         Landsat image Latitude and longitude.
     cold_calibration_points : int
-        Number of cold pixel calibration points (the default is 1).
+        Number of cold pixel calibration points (the default is 10).
     hot_calibration_points : int
-        Number of hot pixel calibration points (the default is 1).
+        Number of hot pixel calibration points (the default is 10).
     max_iterations : int
         Maximum number of iterations (the default is 15).
 
@@ -94,8 +95,8 @@ def et(
 
     """
     # Fixed calibration points
-    cold_calibration_points = 1
-    hot_calibration_points = 1
+    cold_calibration_points=1
+    hot_calibration_points=1
 
     # Image properties
     date = ee.Date(time_start)
@@ -145,7 +146,7 @@ def et(
     sun_elevation = ee.Number(image.get("SUN_ELEVATION"))
     
     # Terrain cos
-    cos_z0, cos_zt = cos_terrain(time_start, dem_product, hour, minutes, coords)
+    cos_zt = cos_terrain(time_start, dem_product, hour, minutes, coords)
 
     # LL: iterative process or endmembers selections may return empty values
     # in this case, return an empty image instead of broken the code
@@ -154,37 +155,45 @@ def et(
         tair_dem = tair_dem_correction(tmin, tmax, elev)
 
         # Land surface temperature correction [K]
-        lst_dem = lst_correction(time_start, lst, elev, tair_dem, rh, sun_elevation,
-                                                    hour, minutes, coords, geometry_image)
+        lst_dem = lst_correction(time_start, lst, elev, tair_dem, rh, sun_elevation, hour, minutes, coords, geometry_image)
+
         # Instantaneous net radiation using reanalysis dataset [W m-2]
         rad_inst = radiation_inst(elev, lst, emissivity, albedo, tair, rh, rso_inst, sun_elevation, cos_zt)
-        
+
         # Instantaneous soil heat flux [W m-2]
-        g_inst = soil_heat_flux(rad_inst, ndvi, albedo, lst, ndwi)
-        
+        g_inst = soil_heat_flux(rad_inst, ndvi, albedo, lst, ndwi, year) # MODIFICAÇÃO: NOVA EQ DE G
+
         # Daily ney radiation [W m-2]
         rad_24h = radiation_24h(time_start, tmax, tmin, elev, sun_elevation, cos_zt, rso24h)
 
         # Cold pixel for wet conditions repretation of the image
-        cold_pixels = cold_pixel(albedo, ndvi, ndwi, lst, top_ndvi, coldest_lst,
+        cold_pixels = cold_pixel(albedo, ndvi, ndwi, lst_dem, top_ndvi, coldest_lst,
                                         geometry_image, coords, proj, elev, month, year, cold_calibration_points)
+
         # Hot pixel
-        hot_pixels = hot_pixel(time_start, albedo, ndvi, ndwi, lst,lst_dem, rad_inst,
+        hot_pixels = hot_pixel(time_start, albedo, ndvi, ndwi, lst, lst_dem, rad_inst,
                                         g_inst, tair, ux_clamp, lowest_ndvi, hottest_lst, geometry_image,
                                             coords, proj, elev, month, year, tfac, hot_calibration_points)
-        # Instantaneous sensible heat flux [W m-2]
-        h_inst = sensible_heat_flux(savi, ux_clamp, cold_pixels, hot_pixels, lst_dem, lst,
-                                        elev, geometry_image, max_iterations)
         
+        # Vegetation height
+        high_veg_height_factor = ee.Number(1)
+        low_veg_h = ee.Number(0.5)
+        veg_h =  veg_height(high_veg_height_factor, lai)
+
+        # Instantaneous sensible heat flux [W m-2]
+        h_inst = sensible_heat_flux(savi, lai, ndvi, ux_clamp, cold_pixels, hot_pixels, lst_dem, lst,
+                                        elev, veg_h, geometry_image, max_iterations)
+
         # Checking if H was estimated, otherwise return a nodata mask
         h_cond = ee.Number(cold_pixels.size()).eq(0).Or(ee.Number(hot_pixels.size()).eq(0))
 
         h_inst = ee.Image(ee.Algorithms.If(h_cond.eq(1),
                                         ee.Image.constant(0).updateMask(0),
                                         h_inst)).rename("h_inst")
-        
+
         # Daily evapotranspiration [mm day-1]
         et_24hr = daily_et(h_inst, g_inst, rad_inst, lst_dem, rad_24h)
+
 
     except Exception as e:
         # CGM - We should probably log the exception so the user knows,
@@ -192,7 +201,7 @@ def et(
         print(f"Unhandled Exception: {e}")
 
         # Return a masked image
-        et_24hr = ee.Image.constant(0).updateMask(0).rename("et")
+        et_24hr = ee.Image.constant(0).updateMask(0).rename("et").set('system:time_start', image.date())
 
     return et_24hr.rename("et")
 
@@ -586,7 +595,6 @@ def tao_sw(dem, tair, rh, sun_elevation, cos_z0):
 
     return tao_sw_img.rename("tao_sw")
 
-
 def cos_terrain(time_start, dem, hour, minutes, coords):
     """
     Cosine zenith angle elevation (Allen et al. (2006)).
@@ -667,7 +675,7 @@ def cos_terrain(time_start, dem, hour, minutes, coords):
 
     cos_zt = w.expression("-a + b * w_cos + c * w_sin", {"a": a, "b": b, "c": c, "w_cos": w.cos(), "w_sin": w.sin()}).rename('cos_zen_terrain')
     
-    return cos_z0, cos_zt
+    return cos_zt
 
 
 def tair_dem_correction(tmin, tmax, dem):
@@ -764,7 +772,7 @@ def lst_correction(time_start, lst, dem, tair, rh, sun_elevation, hour, minutes,
     # Correcting land surface temperature [K]
     temp_corr = lst.add(dem.select("elevation").multiply(temp_lapse_rate))
 
-    cos_z0, cos_zt = cos_terrain(time_start, dem, hour, minutes, coords)
+    cos_zt = cos_terrain(time_start, dem, hour, minutes, coords)
 
     # Broad-band atmospheric transmissivity (ASCE-EWRI (2005))
     tao_sw_img = tao_sw(dem, tair, rh, sun_elevation, cos_zt)
@@ -843,6 +851,7 @@ def lc_mask(month, year, geometry_image, mask_img):
     
     n_count_lc = ee.Number(count_land_cover_pixels.get('land_cover_pixels'))
 
+    #mask = ee.Algorithms.If(n_count_lc.gte(5329000), landcover_mask, mask_img)
     mask = ee.Algorithms.If(n_count_lc.gte(3000), landcover_mask, mask_img)
 
     mask = ee.Algorithms.If(isWinter.eq(1), mask_img, mask)
@@ -874,25 +883,55 @@ def homogeneous_mask(ndvi, proj):
 
     # Calculate NDVI standard deviation in pixel neighborhood
     sd_ndvi = (
-        ndvi.reduceNeighborhood(
-            reducer=ee.Reducer.stdDev(), kernel=ee.Kernel.square(radius=3, units="pixels"), skipMasked=False
-        )
-        .reproject(proj)
+        ndvi.reduceNeighborhood(reducer=ee.Reducer.stdDev(), 
+                                kernel=ee.Kernel.square(radius=3, units="pixels"), 
+                                skipMasked=False)\
+        .reproject(proj)\
         .updateMask(1)
     )
     
     # Calculate mean NDVI in pixel neighborhood
-    mean_ndvi = (
-            ndvi.reduceNeighborhood(
-                reducer=ee.Reducer.mean(), kernel=ee.Kernel.square(radius=3, units="pixels"), skipMasked=False
-            )
-            .reproject(proj)
-            .updateMask(1)
-        )
+    #mean_ndvi = (
+    #        ndvi.reduceNeighborhood(
+    #            reducer=ee.Reducer.mean(), kernel=ee.Kernel.square(radius=3, units="pixels"), skipMasked=False
+    #        )
+    #        .reproject(proj)
+    #        .updateMask(1)
+    #    )
 
-    cv_mask = sd_ndvi.divide(mean_ndvi).lte(0.15).selfMask()
+    #cv_mask = sd_ndvi.divide(mean_ndvi).lte(0.15).selfMask() # MODIFICAÇÃO
+    cv_mask = sd_ndvi.lte(0.15).selfMask()
 
     return ee.Image(cv_mask)
+
+
+def slope_mask(dem, proj):
+    """
+    Applies a filter for slope values in the image, allowing only pixels from flat 
+    regions to be selected as endmembers
+
+    Parameters
+    ----------
+
+    dem : ee.Image
+        Digital Elevation Model (dem).
+    proj : ee.Dictionary
+        Landsat image projection.
+
+    Returns
+    -------
+    ee.Image
+    
+    References
+    ----------
+
+    """
+
+    dem_slope = ee.Terrain.slope(dem).divide(180).multiply(3.141592653589793).tan().multiply(100).reproject(proj)
+    slp_mask = dem_slope.lte(10).selfMask()
+
+    return ee.Image(slp_mask)
+
 
 def cold_pixel(
     albedo,
@@ -933,7 +972,7 @@ def cold_pixel(
     dem : ee.Image
         Elevation data [m].
     calibration_points : int
-        Number of calibration points (the default is 1).
+        Number of calibration points (the default is 10).
 
     Returns
     -------
@@ -965,8 +1004,7 @@ def cold_pixel(
     lst_neg = lst_dem.multiply(-1).rename("lst_neg")
 
     # Lst for non water pixels 
-    # lst_nw = lst_dem.updateMask(ndwi.lte(0)).rename('lst_nw')
-    lst_nw = lst_dem.rename("lst_nw")
+    lst_nw = lst_dem.updateMask(ndwi.lte(0)).rename('lst_nw')
 
     # Create a full scene mask
     mask = ndvi.select(0).updateMask(1)
@@ -976,13 +1014,16 @@ def cold_pixel(
     # Homogenetou mask for ndvi
     stdev_ndvi = homogeneous_mask(ndvi, proj)
 
+    # Flat areas mask
+    slope_filt = slope_mask(dem, proj)
+
     # Creating a raster with all the parameters
     images = pos_ndvi.addBands([ndvi, ndvi_neg, pos_ndvi, lst_neg, lst_nw, coords, dem.toFloat()])
 
     # Estimating ndvi percentile [coldest]
     perc_top_ndvi = (images.select("ndvi_neg")
-        .updateMask(land_cover_mask)\
         .updateMask(stdev_ndvi)
+        .updateMask(slope_filt)
         .reduceRegion(reducer=ee.Reducer.percentile([ndvi_cold]), geometry=geometry_image, scale=30, maxPixels=1e9)
         .combine(ee.Dictionary({"ndvi_neg": 100}), overwrite=False)
     )
@@ -991,15 +1032,13 @@ def cold_pixel(
     perc_top_ndvi_value = ee.Number(perc_top_ndvi.get("ndvi_neg"))
 
     # Filtering ndvi raster with the percecilte
-    top_ndvi = images.updateMask(stdev_ndvi)\
-                        .updateMask(land_cover_mask)\
-                        .updateMask(images.select("ndvi_neg").lte(perc_top_ndvi_value))
+    top_ndvi = images.updateMask(stdev_ndvi).updateMask(slope_filt).updateMask(images.select("ndvi_neg").lte(perc_top_ndvi_value))
     
     # Filtering lst
     perc_low_lst = (
         top_ndvi.select("lst_nw")
-        .updateMask(land_cover_mask)\
         .updateMask(stdev_ndvi)
+        .updateMask(slope_filt)
         .reduceRegion(reducer=ee.Reducer.percentile([lst_cold]), geometry=geometry_image, scale=30, maxPixels=1e9)
         .combine(ee.Dictionary({"lst_nw": 350}), overwrite=False)
     )
@@ -1008,7 +1047,7 @@ def cold_pixel(
     perc_low_lst_value = ee.Number(perc_low_lst.get("lst_nw"))
 
     # Filtering lst raster with the percentile
-    coldest_lst = top_ndvi.updateMask(land_cover_mask).updateMask(top_ndvi.select("lst_nw").lte(perc_low_lst_value))
+    coldest_lst = top_ndvi.updateMask(stdev_ndvi).updateMask(slope_filt).updateMask(top_ndvi.select("lst_nw").lte(perc_low_lst_value))
 
     # Creating a mask
     masks = coldest_lst.select("lst_nw").mask().selfMask()
@@ -1132,8 +1171,7 @@ def radiation_inst(dem, lst, emissivity, albedo, tair, rh, swdown_inst, sun_elev
 
     return rn_inst.rename("rn_inst")
 
-
-def soil_heat_flux(rn, ndvi, albedo, lst_dem, ndwi):
+def soil_heat_flux(rn, ndvi, albedo, lst_dem, ndwi, year, country='USA'):
     """
     Instantaneous Soil Heat Flux [W m-2]
 
@@ -1158,18 +1196,75 @@ def soil_heat_flux(rn, ndvi, albedo, lst_dem, ndwi):
     ----------
 
     """
-
-    # Soil heat flux [W m-2]
-    g = rn.expression(
+    # Soil heat flux [W m-2] for croplands 
+    g_crop = rn.expression(
         "rn * (lst - 273.15) * (0.0038 + (0.0074 * albedo)) * (1 - 0.98 * (ndvi ** 4))",
         {"rn": rn, "ndvi": ndvi, "albedo": albedo, "lst": lst_dem},
     )
+
+    # Soil heat flux [W m-2] for all classes except croplands (Ruhoff, 2019)
+    g_noncrop = rn.expression(
+        "rn * lst * (0.015*albedo) * (1 - 0.8*(ndvi ** (1/3)))",
+        {"rn": rn, "ndvi": ndvi, "albedo": albedo, "lst": lst_dem},
+    )
+
+    # ----------------------------------------------------------------------------------
+    # USA
+    # Conditions
+    if country == 'USA':
+        year_min = 1997
+        year_max = 2024
+        year_condition = ee.Number(year).max(year_min).min(year_max)
+
+        start = ee.Date.fromYMD(year_condition, 1, 1)
+        end = ee.Date.fromYMD(year_condition, 12, 31)
+
+        # Select classification corresponding to the year of the imageq
+        lc = ee.ImageCollection('USDA/NASS/CDL').select('cropland')\
+            .filter(ee.Filter.date(start, end)).first()
+
+        # Filter cropland classes 1
+        crop1 = lc.updateMask(lc.lt(61))
+        crop1 = crop1.where(crop1, 1).unmask(0)
+
+        # Filter cropland classes 2
+        crop2 = lc.updateMask(lc.gte(66).And(lc.lte(77)))
+        crop2 = crop2.where(crop2, 1).unmask(0)
+
+        # Filter cropland classes 2
+        crop3 = lc.updateMask(lc.gte(196))
+        crop3 = crop3.where(crop3, 1).unmask(0)
+
+        # Land cover mask - total croplands
+        landcover_mask = crop1.add(crop2).add(crop3)
+        #crop = landcover_mask.updateMask(landcover_mask.eq(1))
+        crop = landcover_mask.eq(1)
+    
+    # ----------------------------------------------------------------------------------
+    # BRAZIL
+    # Conditions
+    if country == 'BR':
+        year_min = 1985
+        year_max = 2023
+        year_condition = ee.Number(year).max(year_min).min(year_max)
+
+        # Select classification corresponding to the year of the imageq
+        band = ee.String('classification_').cat(year_condition.format())
+        lc = ee.Image('projects/mapbiomas-public/assets/brazil/lulc/collection9/mapbiomas_collection90_integration_v1').select(band)
+
+        # Reclassify Mapbiomas and extract cropland mask
+        map_classes = ee.List([1, 3, 4, 5, 6, 49, 10, 11, 12, 32, 29, 50, 14, 15, 18, 19, 39, 20, 40, 62, 41, 36, 46, 47, 35, 48, 9, 21, 22, 23, 24, 30, 75, 25, 26, 33, 31, 27])
+        new_classes = ee.List([1, 1, 2, 0, 0,  0,  0,  0,  3,  0,  0,  0,  0,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4, 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0])
+        lulc = lc.select(band).remap(map_classes, new_classes)
+        crop = lulc.eq(4)
+
+    # Set G for crop and noncrop areas
+    g = g_noncrop.where(crop, g_crop)
 
     # Considering G as 50% of net radiation for water bodies
     g = g.where(ndwi.gt(0), rn.multiply(0.5))
 
     return g.rename("g_inst")
-
 
 def radiation_24h(time_start, tmax, tmin, elev, sun_elevation, cos_terrain, rso24h):
     """
@@ -1313,7 +1408,7 @@ def hot_pixel(
     proj : ee.Dictionary
         Landsat image projection.
     calibration_points : int
-        Number of calibration points (the default is 1).
+        Number of calibration points (the default is 10).
 
     Returns
     -------
@@ -1348,21 +1443,24 @@ def hot_pixel(
  
     # Create a full scene mask
     mask = ndvi.select(0).updateMask(1)
+    
     # Land cover mask
-    land_cover_mask = lc_mask(month, year, geometry_image, mask)
+    #land_cover_mask = lc_mask(month, year, geometry_image, mask)
 
     # Homogenetou mask for ndvi
     stdev_ndvi = homogeneous_mask(ndvi, proj)
 
+    # Flat areas mask
+    slope_filt = slope_mask(dem, proj)
+
     # Creating a raster with all the parameters
-    images = pos_ndvi.addBands([ndvi, ndvi_neg, rn, g, pos_ndvi,
-                                    lst_neg, lst_nw, lst, tair, ux, coords])
+    images = pos_ndvi.addBands([ndvi, ndvi_neg, rn, g, pos_ndvi, lst_neg, lst_nw, lst, tair, ux, coords])
     
     # Estimating ndvi percentile [hottest]
     perc_low_ndvi = (
         images.select("post_ndvi")
-        .updateMask(land_cover_mask)
         .updateMask(stdev_ndvi)
+        .updateMask(slope_filt)
         .reduceRegion(reducer=ee.Reducer.percentile([ndvi_hot]), geometry=geometry_image, scale=30, maxPixels=1e9)
         .combine(ee.Dictionary({"post_ndvi": 100}), overwrite=False)
     )
@@ -1371,22 +1469,21 @@ def hot_pixel(
     perc_low_ndvi_value = ee.Number(perc_low_ndvi.get("post_ndvi"))
 
     # Filtering ndvi raster with the percecilte
-    low_ndvi = images.updateMask(land_cover_mask).updateMask(images.select("post_ndvi").lte(perc_low_ndvi_value))
+    low_ndvi = images.updateMask(stdev_ndvi).updateMask(slope_filt).updateMask(images.select("post_ndvi").lte(perc_low_ndvi_value))
 
     # Estimating lst percentile [hottest]
     perc_top_lst = (
         low_ndvi.select("lst_neg")
-        .updateMask(land_cover_mask)
         .updateMask(stdev_ndvi)
+        .updateMask(slope_filt)
         .reduceRegion(reducer=ee.Reducer.percentile([lst_hot]), geometry=geometry_image, scale=30, maxPixels=1e9)
-        .combine(ee.Dictionary({"lst_neg": 350}), overwrite=False)
-    )
+        .combine(ee.Dictionary({"lst_neg": 350}), overwrite=False))
+    
     # Get low lst value
     perc_top_lst_value = ee.Number(perc_top_lst.get("lst_neg"))
 
     # Filtering lst raster with the percecilte  
-    top_lst = low_ndvi.updateMask(land_cover_mask).updateMask(stdev_ndvi)\
-                        .updateMask(low_ndvi.select("lst_neg").lte(perc_top_lst_value))
+    top_lst = low_ndvi.updateMask(stdev_ndvi).updateMask(slope_filt).updateMask(low_ndvi.select("lst_neg").lte(perc_top_lst_value))
 
     lst_hot_int = top_lst.select("lst_nw").min(1).max(1).int().rename("int")
     lst_hotpix = top_lst.addBands(lst_hot_int)
@@ -1399,6 +1496,7 @@ def hot_pixel(
         reducer=ee.Reducer.sum(), geometry=geometry_image, scale=30, maxPixels=1e9
     )
     sum_final_hot_pix_value = ee.Number(sum_final_hot_pix.get("int"))
+    #print('sum_final_hot_pix_value', sum_final_hot_pix_value.getInfo()) # APAGAR
 
     # CGM - Not used any more
     # def function_def_pixel(f):
@@ -1406,7 +1504,7 @@ def hot_pixel(
     
     # Creating a table with the cold pixels identified in the processed
     hot_pixels_table = lst_hotpix.addBands(tfac).stratifiedSample(
-                numPoints=calibration_points,
+                numPoints=calibration_points, 
                 classBand="int",
                 region=geometry_image,
                 scale=30,
@@ -1415,26 +1513,30 @@ def hot_pixel(
             ).sort('lst_nw',False)
     
     # Checkin if there are at least 1 pixel found as cold pixel
-    minimum_cold_pixels = 1 #3000
+    minimum_hot_pixels = 1 #3000
 
     hot_pixels_table = ee.FeatureCollection(
-        ee.Algorithms.If(sum_final_hot_pix_value.gt(minimum_cold_pixels),
+        ee.Algorithms.If(sum_final_hot_pix_value.gt(minimum_hot_pixels),
             hot_pixels_table, 
             ee.FeatureCollection([ee.Feature(ee.Geometry.Point([0, 0]),
                                              {'ndvi': 0,'rn_inst': 0, 'g_inst': 0,
                                                     'lst_nw': 0, 'longitude': 0, 'latitude': 0, 'tfac':0})]))
     )
-    
+
     return hot_pixels_table
+
 
 def sensible_heat_flux(
     savi,
+    lai,
+    ndvi,
     ux,
     fc_cold_pixels,
     fc_hot_pixels,
     lst_dem,
     lst,
     dem,
+    veg_height,
     geometry_image,
     max_iterations=15,
 ):
@@ -1481,7 +1583,7 @@ def sensible_heat_flux(
     #iterations = ee.List.repeat(1, max_iterations)
 
     # Vegetation height [m]
-    n_veg_height = ee.Number(0.5)
+    n_veg_height = ee.Number(0.25)
 
     # Wind speed height [m]
     n_zx = ee.Number(2)
@@ -1510,8 +1612,8 @@ def sensible_heat_flux(
         'i_ufric_ws': i_ufric_ws, 'n_height': n_height, 'n_zom': n_zom, 'n_K': n_K})
     
     # Momentum roughness length for each pixel.
-    i_zom = lst.expression('exp((5.62 * SAVI) - 5.809)', {'SAVI': savi},)
-    
+    i_zom = calculateZomRaupach(lai, veg_height) # MODIFICAÇÃO 01
+        
     # Momentum roughness slope/aspect Correction.  (Allen2002  A12 Eqn9)
     i_zom = i_zom.expression('zom * (1 + (slope - 5) / 20)', {
         'zom': i_zom, 'slope': slope_aspect.select('slope')},)
@@ -1519,7 +1621,7 @@ def sensible_heat_flux(
     # Friction velocity for each pixel. (Allen2002 Eqn 30)
     i_ufric = lst.expression(
         '(n_K * u200) / log(height / i_zom)',
-        {'u200': i_u200, 'height': n_height, 'i_zom': n_zom, 'n_K': n_K},)
+        {'u200': i_u200, 'height': n_height, 'i_zom': i_zom, 'n_K': n_K},)
     
     # Heights [m] above the zero plane displacement.
     z1 = ee.Number(0.01)
@@ -1565,7 +1667,7 @@ def sensible_heat_flux(
     list_rah_hot = ee.List([])
     list_coef_a = ee.List([])
     list_coef_b = ee.List([])
-      
+
     for n in range(15):
         d_rah_hot = i_rah\
             .reduceRegion(reducer=ee.Reducer.first(), geometry=p_hot_pix,
@@ -1804,3 +1906,126 @@ def et_fraction(time_start, et, et_reference_source, et_reference_band, et_refer
     et_fraction = et.divide(et_reference_img).rename("et_fraction")
 
     return et_fraction
+
+
+  
+def veg_height(high_veg_height_factor, lai):
+    """Calculate Zom roughness lenght using Raupach (1994) equation
+
+    Parameters
+    ----------
+    lai : ee.Image
+        Leaf area index [adm].
+    h : ee.Image
+        Vegetation heights [m]
+    et_reference_source : ee.ImageCollection, str
+        ET reference collection
+    et_reference_band : str
+        ETr band name.
+    et_reference_factor : ee.Number, int
+        ETr factor.
+
+    Returns
+    -------
+    ee.Image
+
+    References
+    ----------
+    https://doi.org/10.1016/j.rse.2020.112165
+
+    
+    """
+
+    # Lê a base de dados de entrada
+    gediHeightCollection = ee.ImageCollection("projects/sat-io/open-datasets/GLAD/GEDI_V27")
+    gediHeight = gediHeightCollection.mosaic().rename('h_original')
+
+    # Correção: altura mínima de 0.5m para evitar divisão por zero
+    a = ee.Image.constant(0.2)
+    b = ee.Image.constant(0.1)
+    low_heights = lai.multiply(a).add(b)
+    h_base = gediHeight.where(gediHeight.eq(0), low_heights)
+
+    # Correção para vegetação alta (limita altura a 25m)
+    h_base = h_base.where(h_base.gte(25), 25)
+
+    # Aplica os ajustes de altura
+    # Identificar vegetação alta (> 3m) e baixa (≤ 3m)
+    #vegetation_high = h_base.gt(3)
+    #vegetation_low = h_base.lte(3)
+
+    h_final = h_base
+
+    # Ajuste para vegetação ALTA (aplicar fator percentual)
+    #if high_veg_height_factor != 1.0:
+    #    h_high_adjusted = h_base.multiply(high_veg_height_factor)
+    #    h_final = vegetation_high.multiply(h_high_adjusted).add(vegetation_low.multiply(h_base))
+
+    # Ajuste para vegetação BAIXA (aplicar altura fixa)
+    #if low_veg_h != None:
+    #    h_low_fixed = ee.Image(low_veg_h)
+    #    h_final = vegetation_low.multiply(h_low_fixed).add(vegetation_high.multiply(h_final))
+
+    # Renomear altura final
+    h_final = h_final.rename('h')
+
+    return h_final
+
+
+def calculateZomRaupach(lai, h):
+    """Calculate Zom roughness lenght using Raupach (1994) equation
+
+    Parameters
+    ----------
+    lai : ee.Image
+        Leaf area index [adm].
+    h : ee.Image
+        Vegetation heights [m]
+    et_reference_source : ee.ImageCollection, str
+        ET reference collection
+    et_reference_band : str
+        ETr band name.
+    et_reference_factor : ee.Number, int
+        ETr factor.
+
+    Returns
+    -------
+    ee.Image
+
+    References
+    ----------
+    Raupach, M. R.: Simplified expressions for vegetation roughness
+    length and zero-plane displacement as functions of canopy height
+    and area index, Bound.-Lay. Meteorol., 71(1-2), 211-216, 1994
+    """
+
+    # Constantes conforme Raupach (1994) e validadas por Colin & Faivre (2010)
+    kappa = ee.Number(0.4);          # Constante de von Kármán
+    cd1 = ee.Number(7.5);            # Constante empírica para d/h (Equação 8)
+    Cs = ee.Number(0.003);           # Coeficiente de arrasto do substrato
+    CR = ee.Number(0.3);             # Coeficiente de arrasto do elemento rugoso
+    psi_h = ee.Number(0.193);        # Função de influência da subcamada rugosa (Equação 5)
+    max_drag = ee.Number(0.3);       # Valor máximo de u*/Uh
+
+    # Equação 8: Deslocamento do plano zero normalizado
+    # d/h = (1 - exp(-cd1×A)) / √(cd1×A)
+    cd1_A = lai.multiply(cd1)
+    exp_term = cd1_A.multiply(-1).exp()
+    numerator = ee.Image(1).subtract(exp_term)
+    denominator = cd1_A.sqrt()
+    d_h = numerator.divide(denominator)
+
+    # Equação 7: Coeficiente de arrasto
+    # u*/Uh = min[(Cs + CR×A/2)^0.5, (u*/Uh)max]
+    drag_term = lai.multiply(CR).divide(2).add(Cs).sqrt()
+    u_ratio = drag_term.min(max_drag)
+
+    # Equação 4: Comprimento de rugosidade normalizado
+    # z₀/h = (1-d/h) × exp(-κ×Uh/u* - ψh)
+    term1 = ee.Image(1).subtract(d_h)
+    exponent = u_ratio.pow(-1).multiply(kappa).add(psi_h).multiply(-1)
+    term2 = exponent.exp()
+    z0_h = term1.multiply(term2)
+
+    # z₀ absoluto em metros
+    return z0_h.multiply(h)
