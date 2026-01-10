@@ -89,10 +89,6 @@ class Image:
             et_reference_resample : {'nearest', 'bilinear', 'bicubic', None}
                 Reference ET resampling.  The default is None which is
                 equivalent to nearest neighbor resampling.
-            cold_calibration_points : int
-                Number of cold calibration points (the default is 1).
-            hot_calibration_points : int
-                Number of hot calibration points (the default is 1).
             max_iterations : int
                 Maximum number of iterations (the default is 15).
 
@@ -174,16 +170,6 @@ class Image:
         # Image projection and geotransform
         self.crs = image.projection().crs()
         self.transform = ee.List(ee.Dictionary(ee.Algorithms.Describe(image.projection())).get("transform"))
-
-        # CGM - Testing out passing as a kwargs but could be dedicated function params
-        try:
-            self.cold_calibration_points = kwargs["cold_calibration_points"]
-        except:
-            self.cold_calibration_points = 1
-        try:
-            self.hot_calibration_points = kwargs["hot_calibration_points"]
-        except:
-            self.hot_calibration_points = 1
 
         try:
             self.max_iterations = kwargs["max_iterations"]
@@ -480,13 +466,13 @@ class Image:
 
         et = model.et(
             image=self.image,
+            lai=self.lai,
             ndvi=self.ndvi,
             ndwi=self.ndwi,
             lst=self.lst,
             albedo=self.albedo,
             emissivity=self.emissivity,
             savi=self.savi,
-            # lai=self.lai,
             meteorology_source_inst=self._meteorology_source_inst,
             meteorology_source_daily=self._meteorology_source_daily,
             elev_product=self._elev_source,
@@ -499,8 +485,6 @@ class Image:
             proj=self.proj,
             coords=self.coords,
             #et_reference = self.et_reference,
-            cold_calibration_points=self.cold_calibration_points,
-            hot_calibration_points=self.hot_calibration_points,
             max_iterations=self.max_iterations,
         )
 

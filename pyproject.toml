@@ -1,6 +1,6 @@
 [project]
 name = "openet-geesebal"
-version = "0.4.0"
+version = "0.5.0"
 authors = [
     { name = "Anderson Ruhoff", email = "andersonruhoff@gmail.com" },
     { name = "Leonardo Laipelt", email = "leolaipelt@gmail.com" },
