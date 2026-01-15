@@ -28,9 +28,6 @@ def et(
     geometry_image,
     proj,
     coords,
-    #et_reference,
-    cold_calibration_points=1,
-    hot_calibration_points=1,
     max_iterations=15,
 ):
     """
@@ -40,6 +37,8 @@ def et(
     ----------
     image : ee.Image
         Landsat image.
+    lai : ee.Image
+        Leaf area index.
     ndvi : ee.Image
         Normalized difference vegetation index.
     ndwi : ee.Image
@@ -73,10 +72,6 @@ def et(
         Landsat image projection.
     coords : ee.Image
         Landsat image Latitude and longitude.
-    cold_calibration_points : int
-        Number of cold pixel calibration points (the default is 10).
-    hot_calibration_points : int
-        Number of hot pixel calibration points (the default is 10).
     max_iterations : int
         Maximum number of iterations (the default is 15).
 
@@ -95,8 +90,8 @@ def et(
 
     """
     # Fixed calibration points
-    cold_calibration_points=1
-    hot_calibration_points=1
+    cold_calibration_points = 1
+    hot_calibration_points = 1
 
     # Image properties
     date = ee.Date(time_start)
@@ -972,7 +967,7 @@ def cold_pixel(
     dem : ee.Image
         Elevation data [m].
     calibration_points : int
-        Number of calibration points (the default is 10).
+        Number of calibration points (the default is 1).
 
     Returns
     -------
@@ -1101,6 +1096,7 @@ def cold_pixel(
     
     return cold_pixels_table
 
+
 def radiation_inst(dem, lst, emissivity, albedo, tair, rh, swdown_inst, sun_elevation, cos_terrain):
     """
     Instantaneous Net Radiation [W m-2]
@@ -1170,6 +1166,7 @@ def radiation_inst(dem, lst, emissivity, albedo, tair, rh, swdown_inst, sun_elev
     )
 
     return rn_inst.rename("rn_inst")
+
 
 def soil_heat_flux(rn, ndvi, albedo, lst_dem, ndwi, year, country='USA'):
     """
@@ -1265,6 +1262,7 @@ def soil_heat_flux(rn, ndvi, albedo, lst_dem, ndwi, year, country='USA'):
     g = g.where(ndwi.gt(0), rn.multiply(0.5))
 
     return g.rename("g_inst")
+
 
 def radiation_24h(time_start, tmax, tmin, elev, sun_elevation, cos_terrain, rso24h):
     """
@@ -1408,7 +1406,7 @@ def hot_pixel(
     proj : ee.Dictionary
         Landsat image projection.
     calibration_points : int
-        Number of calibration points (the default is 10).
+        Number of calibration points (the default is 1).
 
     Returns
     -------
