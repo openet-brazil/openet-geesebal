@@ -171,9 +171,7 @@ def et(
                                             coords, proj, elev, month, year, tfac, hot_calibration_points)
         
         # Vegetation height
-        high_veg_height_factor = ee.Number(1)
-        low_veg_h = ee.Number(0.5)
-        veg_h =  veg_height(high_veg_height_factor, lai)
+        veg_h =  veg_height(lai, year, geometry_image)
 
         # Instantaneous sensible heat flux [W m-2]
         h_inst = sensible_heat_flux(savi, lai, ndvi, ux_clamp, cold_pixels, hot_pixels, lst_dem, lst,
@@ -1534,7 +1532,7 @@ def sensible_heat_flux(
     lst_dem,
     lst,
     dem,
-    veg_height,
+    veg_height_raster,
     geometry_image,
     max_iterations=15,
 ):
@@ -1610,7 +1608,7 @@ def sensible_heat_flux(
         'i_ufric_ws': i_ufric_ws, 'n_height': n_height, 'n_zom': n_zom, 'n_K': n_K})
     
     # Momentum roughness length for each pixel.
-    i_zom = calculateZomRaupach(lai, veg_height) # MODIFICAÇÃO 01
+    i_zom = calculateZomRaupach(lai, veg_height_raster)
         
     # Momentum roughness slope/aspect Correction.  (Allen2002  A12 Eqn9)
     i_zom = i_zom.expression('zom * (1 + (slope - 5) / 20)', {
@@ -1907,7 +1905,7 @@ def et_fraction(time_start, et, et_reference_source, et_reference_band, et_refer
 
 
   
-def veg_height(high_veg_height_factor, lai):
+def veg_height(lai, year, geometry):
     """Calculate Zom roughness lenght using Raupach (1994) equation
 
     Parameters
@@ -1930,44 +1928,95 @@ def veg_height(high_veg_height_factor, lai):
     References
     ----------
     https://doi.org/10.1016/j.rse.2020.112165
+    """
+    
+    # GEDI vegetation height
+    gediHeightCollection = ee.ImageCollection("projects/sat-io/open-datasets/GLAD/GEDI_V27")
+    gediHeight = gediHeightCollection.mosaic().rename('h_original').clip(geometry)
 
     
-    """
+    # Pega dados mapbiomas para 2019 para calcular a altura média de áreas de floresta
+    band = 'classification'
+    lc_2019 = ee.ImageCollection("projects/mapbiomas-public/assets/brazil/lulc/v1").filter(ee.Filter.eq('year', 2019)).first().clip(geometry)
 
-    # Lê a base de dados de entrada
-    gediHeightCollection = ee.ImageCollection("projects/sat-io/open-datasets/GLAD/GEDI_V27")
-    gediHeight = gediHeightCollection.mosaic().rename('h_original')
+    # Reclassify Mapbiomas and extract forest mask
+    map_classes = ee.List([1, 3, 4, 5, 6, 49, 10, 11, 12, 32, 29, 50, 14, 15, 18, 19, 39, 20, 40, 62, 41, 36, 46, 47, 35, 48, 9, 21, 22, 23, 24, 30, 75, 25, 26, 33, 31, 27])
+    new_classes = ee.List([1, 1, 1, 1, 1,  1,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0])
+    lulc_2019 = lc_2019.select(band).remap(map_classes, new_classes);
 
-    # Correção: altura mínima de 0.5m para evitar divisão por zero
+    height_forest_2019 = gediHeight.updateMask(lulc_2019.eq(1));
+
+    number_height_forest_2019 = height_forest_2019.reduceRegion(reducer=ee.Reducer.mean(), 
+                                                                scale=30, 
+                                                                geometry=geometry, 
+                                                                maxPixels=10e14).getNumber('h_original')
+
+    # Pega dados mapbiomas para a data de interesse
+    year_min = 1985
+    year_max = 2024
+    year_condition = ee.Number(year).max(year_min).min(year_max)
+
+    # Select classification corresponding to the year of the imageq
+    lc = ee.ImageCollection("projects/mapbiomas-public/assets/brazil/lulc/v1").filter(ee.Filter.eq('year', year_condition)).first().clip(geometry)
+
+    # Reclassify Mapbiomas and extract forest mask
+    lulc = lc.select(band).remap(map_classes, new_classes)
+
+    # Altura média de áreas de floresta em 2019
+    height_forest_2019 = gediHeight.updateMask(lulc_2019.eq(1))
+    number_height_forest_2019 = height_forest_2019.reduceRegion(reducer=ee.Reducer.mean(), 
+                                                                scale=30, 
+                                                                geometry=geometry, 
+                                                                maxPixels=10e14).getNumber('h_original')
+    
+    # Equação para estimar altura da vegetação não florestal
     a = ee.Image.constant(0.2)
     b = ee.Image.constant(0.1)
     low_heights = lai.multiply(a).add(b)
-    h_base = gediHeight.where(gediHeight.eq(0), low_heights)
+    gediHeight = gediHeight.where(gediHeight.eq(0), low_heights)
+    try:
+        # Processamento no caso da imagem ser anterior a 2019
+        if year.lt(ee.Number(2019)):
+            #def pre_2019(gediHeight, lulc_2019, number_height_forest_2019):
+
+            # Calcula mapa de transição de desmatamento
+            deforestation_mask = lulc_2019.eq(0).And(lulc.eq(1))
+            deforestation = ee.Image.constant(number_height_forest_2019).updateMask(deforestation_mask)
+            h_veg = gediHeight.where(deforestation_mask.eq(1), deforestation)
+
+            # Atualiza valores de floresta desmatada
+            reforestation_mask = lulc_2019.eq(1).And(lulc.eq(0))
+            h_veg = h_veg.where(reforestation_mask.eq(1), low_heights)
+            
+            return h_veg
+
+        # Processamento no caso da imagem ser posterior a 2019
+        if year.gt(ee.Number(2019)):
+            #def post_2019(gediHeight, lulc_2019, number_height_forest_2019):
+
+            # Atualiza altura da vegetação em áreas reflorestadas
+            reforestation_mask = lulc_2019.eq(0).And(lulc.eq(1))
+            reforestation = ee.Image.constant(number_height_forest_2019).updateMask(reforestation_mask)
+            h_veg = gediHeight.where(reforestation_mask.eq(1), reforestation)
+
+            # Atualiza altura da vegetação em áreas de desmatamento
+            deforestation_mask = lulc_2019.eq(1).And(lulc.eq(0))
+            h_veg = h_veg.where(deforestation_mask.eq(1), low_heights)
+
+            return h_veg
+
+        if year.eq(ee.Number(2019)):
+
+            # Não modifica dados GEDI
+            h_veg = gediHeight
+
+            return h_veg    
+    except:
+        h_veg = gediHeight
 
     # Correção para vegetação alta (limita altura a 25m)
-    h_base = h_base.where(h_base.gte(25), 25)
-
-    # Aplica os ajustes de altura
-    # Identificar vegetação alta (> 3m) e baixa (≤ 3m)
-    #vegetation_high = h_base.gt(3)
-    #vegetation_low = h_base.lte(3)
-
-    h_final = h_base
-
-    # Ajuste para vegetação ALTA (aplicar fator percentual)
-    #if high_veg_height_factor != 1.0:
-    #    h_high_adjusted = h_base.multiply(high_veg_height_factor)
-    #    h_final = vegetation_high.multiply(h_high_adjusted).add(vegetation_low.multiply(h_base))
-
-    # Ajuste para vegetação BAIXA (aplicar altura fixa)
-    #if low_veg_h != None:
-    #    h_low_fixed = ee.Image(low_veg_h)
-    #    h_final = vegetation_low.multiply(h_low_fixed).add(vegetation_high.multiply(h_final))
-
-    # Renomear altura final
-    h_final = h_final.rename('h')
-
-    return h_final
+    h_veg = h_veg.where(h_veg.gte(25), 25)
+    return h_veg
 
 
 def calculateZomRaupach(lai, h):
