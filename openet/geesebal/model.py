@@ -119,7 +119,9 @@ def et(
     elif (meteorology_source_inst == "ECMWF/ERA5_LAND/HOURLY") and \
             (meteorology_source_daily == "projects/openet/assets/meteorology/era5land/na/daily") or \
                 (meteorology_source_inst == "ECMWF/ERA5_LAND/HOURLY") and \
-                    (meteorology_source_daily == "projects/openet/assets/meteorology/era5land/sa/daily"):
+                    (meteorology_source_daily == "projects/openet/assets/meteorology/era5land/sa/daily") or \
+                        (meteorology_source_inst == "ECMWF/ERA5_LAND/HOURLY") and \
+                            (meteorology_source_daily == "ECMWF/ERA5_LAND/DAILY_AGGR"):
 
         tmin, tmax, tair, ux, rh, rso_inst, rso24h, tfac, ux_clamp = meteorology_era5land(
             time_start,
@@ -394,12 +396,15 @@ def meteorology_era5land(time_start, meteorology_source_inst, meteorology_source
     # Get date information
     time_start = ee.Number(time_start)
 
-    # Filtering Daily data
+    # Filtering Daily data # MODIFCIAÇÃO
+    #meteorology_daily = (
+    #    ee.ImageCollection(meteorology_source_daily)
+    #    .filterDate(ee.Date(time_start).advance(-1, "day"), ee.Date(time_start).advance(1, "day"))
+    #    .first()    )
     meteorology_daily = (
         ee.ImageCollection(meteorology_source_daily)
-        .filterDate(ee.Date(time_start).advance(-1, "day"), ee.Date(time_start).advance(1, "day"))
-        .first()
-    )
+        .filterDate(ee.Date(time_start), ee.Date(time_start).advance(1, "day"))
+        .first()    )
 
     # Instantaneous data
     meteorology_inst_collection = ee.ImageCollection(meteorology_source_inst)
@@ -422,7 +427,7 @@ def meteorology_era5land(time_start, meteorology_source_inst, meteorology_source
     delta_time = time_start.subtract(image_previous_time).divide(image_next_time.subtract(image_previous_time))
 
     # Incoming shorwave down [W m-2]
-    swdown24h = meteorology_daily.select("surface_solar_radiation_downwards").divide(1 * 60 * 60 * 24)
+    swdown24h = meteorology_daily.select("surface_solar_radiation_downwards_sum").divide(1 * 60 * 60 * 24)
 
     # Minimum air temperature [K]
     tmin = meteorology_daily.select("temperature_2m_min").rename("tmin")
@@ -496,19 +501,19 @@ def meteorology_era5land(time_start, meteorology_source_inst, meteorology_source
     # Accumulation time period
     accum_period = -60
 
-    # Accum meteo data 
-    gridmet_accum = ee.ImageCollection(meteorology_source_daily).filterDate(
-        ee.Date(time_start).advance(accum_period, "days"), ee.Date(time_start)
-    )
+    # Accum meteo data
+    
+    # Precipitation
+    precipt_accum = ee.ImageCollection(meteorology_source_daily).filterDate(
+        ee.Date(time_start).advance(accum_period, "days"), ee.Date(time_start) ) \
+                            .select('total_precipitation_sum').sum().multiply(1000).rename('total_precipitation')
 
     # Reference ET 
-    etr_accum = gridmet_accum.select("etr_asce").sum()
-
-    # Precipitation
-    precipt_accum = gridmet_accum.select("total_precipitation").sum()
+    etr_accum = ee.ImageCollection('projects/ee-openetbrazil/assets/meteorological/daily/era5-land/sa').filterDate(
+        ee.Date(time_start).advance(accum_period, "days"), ee.Date(time_start) ).select("etr_asce").sum()
 
     # Ratio between precipt/etr
-    ratio = precipt_accum.divide(etr_accum)
+    ratio = precipt_accum.divide(etr_accum).rename('ratio')
 
     # Temperature adjustment offset (Allen2013 Eqn 8)
     tfac = etr_accum.expression("2.6 - 13 * ratio", {"ratio": ratio})
@@ -528,6 +533,7 @@ def meteorology_era5land(time_start, meteorology_source_inst, meteorology_source
     wind_clamp = wind_clamp.resample("bilinear")
 
     return [tmin, tmax, tair_c, wind_med, rh, rso_inst, swdown24h, tfac, wind_clamp]
+
 
 
 def tao_sw(dem, tair, rh, sun_elevation, cos_z0):
@@ -1166,7 +1172,7 @@ def radiation_inst(dem, lst, emissivity, albedo, tair, rh, swdown_inst, sun_elev
     return rn_inst.rename("rn_inst")
 
 
-def soil_heat_flux(rn, ndvi, albedo, lst_dem, ndwi, year, country='USA'):
+def soil_heat_flux(rn, ndvi, albedo, lst_dem, ndwi, year, country='BR'):
     """
     Instantaneous Soil Heat Flux [W m-2]
 
@@ -1932,62 +1938,79 @@ def veg_height(lai, year, geometry):
     
     # GEDI vegetation height
     gediHeightCollection = ee.ImageCollection("projects/sat-io/open-datasets/GLAD/GEDI_V27")
-    gediHeight = gediHeightCollection.mosaic().rename('h_original').clip(geometry)
+    gediHeight = gediHeightCollection.mosaic().rename('h_original')#.clip(geometry)
 
-    
-    # Pega dados mapbiomas para 2019 para calcular a altura média de áreas de floresta
-    band = 'classification'
-    lc_2019 = ee.ImageCollection("projects/mapbiomas-public/assets/brazil/lulc/v1").filter(ee.Filter.eq('year', 2019)).first().clip(geometry)
-
-    # Reclassify Mapbiomas and extract forest mask
-    map_classes = ee.List([1, 3, 4, 5, 6, 49, 10, 11, 12, 32, 29, 50, 14, 15, 18, 19, 39, 20, 40, 62, 41, 36, 46, 47, 35, 48, 9, 21, 22, 23, 24, 30, 75, 25, 26, 33, 31, 27])
-    new_classes = ee.List([1, 1, 1, 1, 1,  1,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0])
-    lulc_2019 = lc_2019.select(band).remap(map_classes, new_classes);
-
-    height_forest_2019 = gediHeight.updateMask(lulc_2019.eq(1));
-
-    number_height_forest_2019 = height_forest_2019.reduceRegion(reducer=ee.Reducer.mean(), 
-                                                                scale=30, 
-                                                                geometry=geometry, 
-                                                                maxPixels=10e14).getNumber('h_original')
-
-    # Pega dados mapbiomas para a data de interesse
-    year_min = 1985
-    year_max = 2024
-    year_condition = ee.Number(year).max(year_min).min(year_max)
-
-    # Select classification corresponding to the year of the imageq
-    lc = ee.ImageCollection("projects/mapbiomas-public/assets/brazil/lulc/v1").filter(ee.Filter.eq('year', year_condition)).first().clip(geometry)
-
-    # Reclassify Mapbiomas and extract forest mask
-    lulc = lc.select(band).remap(map_classes, new_classes)
-
-    # Altura média de áreas de floresta em 2019
-    height_forest_2019 = gediHeight.updateMask(lulc_2019.eq(1))
-    number_height_forest_2019 = height_forest_2019.reduceRegion(reducer=ee.Reducer.mean(), 
-                                                                scale=30, 
-                                                                geometry=geometry, 
-                                                                maxPixels=10e14).getNumber('h_original')
-    
-    # Equação para estimar altura da vegetação não florestal
-    a = ee.Image.constant(0.2)
-    b = ee.Image.constant(0.1)
-    low_heights = lai.multiply(a).add(b)
-    gediHeight = gediHeight.where(gediHeight.eq(0), low_heights)
+    # If scene is in Brazil
     try:
+
+        # Pega dados mapbiomas para 2019 para calcular a altura média de áreas de floresta
+        band = 'classification'
+        lc_2019 = ee.ImageCollection("projects/mapbiomas-public/assets/brazil/lulc/v1").filter(ee.Filter.eq('year', 2019)).first()#.clip(geometry) # CLIP!!
+
+        # Reclassify Mapbiomas and extract forest mask
+        map_classes = ee.List([1, 3, 4, 5, 6, 49, 10, 11, 12, 32, 29, 50, 14, 15, 18, 19, 39, 20, 40, 62, 41, 36, 46, 47, 35, 48, 9, 21, 22, 23, 24, 30, 75, 25, 26, 33, 31, 27])
+        new_classes = ee.List([1, 1, 1, 1, 1,  1,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0])
+        lulc_2019 = lc_2019.select(band).remap(map_classes, new_classes);
+
+        # ...update with MODIS LULC
+        map_classes = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+        new_classes = [1, 1, 1, 1, 1, 0, 0, 0, 0,  0,  0,  0,  0,  0,  0,  0,  0]
+        lc_modis_2019 = (ee.ImageCollection('MODIS/061/MCD12Q1')
+            .select('LC_Type1')
+            .filter(ee.Filter.calendarRange(2019, 2019, 'year')).first()
+            .remap(map_classes, new_classes))
+        lulc_2019 = ee.ImageCollection.fromImages([lc_modis_2019, lulc_2019]).mosaic().rename('landcover')#.clip(geometry) # CLIP!!
+        
+        # Get the mean height of forests in 2019
+        height_forest_2019 = gediHeight.updateMask(lulc_2019.eq(1));
+        number_height_forest_2019 = height_forest_2019.reduceRegion(reducer=ee.Reducer.mean(), 
+                                                                    scale=30, 
+                                                                    geometry=geometry, 
+                                                                    maxPixels=10e14).getNumber('h_original')        # Pega dados mapbiomas para a data de interesse
+        
+        # Actual date
+        year_min = 1985
+        year_max = 2024
+        year_condition = ee.Number(year).max(year_min).min(year_max)
+
+        # Select classification corresponding to the year of the image
+        lc = ee.ImageCollection("projects/mapbiomas-public/assets/brazil/lulc/v1").filter(ee.Filter.eq('year', year_condition)).first()#.clip(geometry) # CLIP!!
+
+        # Reclassify Mapbiomas and extract forest mask
+        map_classes = ee.List([1, 3, 4, 5, 6, 49, 10, 11, 12, 32, 29, 50, 14, 15, 18, 19, 39, 20, 40, 62, 41, 36, 46, 47, 35, 48, 9, 21, 22, 23, 24, 30, 75, 25, 26, 33, 31, 27])
+        new_classes = ee.List([1, 1, 1, 1, 1,  1,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0])
+        lulc = lc.select(band).remap(map_classes, new_classes)
+
+        # ...update with MODIS LULC
+        modis_year_min = 2001
+        modis_year_max = 2024
+        modis_year_condition = ee.Number(year).max(modis_year_min).min(modis_year_max)
+        map_classes = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+        new_classes = [1, 1, 1, 1, 1, 0, 0, 0, 0,  0,  0,  0,  0,  0,  0,  0,  0]
+        lc_modis = (ee.ImageCollection('MODIS/061/MCD12Q1')
+            .select('LC_Type1')
+            .filter(ee.Filter.calendarRange(modis_year_condition, modis_year_condition, 'year')).first()
+            .remap(map_classes, new_classes))
+        lulc = ee.ImageCollection.fromImages([lc_modis, lulc]).mosaic().rename('landcover')#.clip(geometry) # CLIP!!
+
+        # Equação para estimar altura da vegetação não florestal
+        a = ee.Image.constant(0.2)
+        b = ee.Image.constant(0.1)
+        low_heights = lai.multiply(a).add(b)
+        gediHeight = gediHeight.where(gediHeight.eq(0), low_heights)
+
         # Processamento no caso da imagem ser anterior a 2019
         if year.lt(ee.Number(2019)):
-            #def pre_2019(gediHeight, lulc_2019, number_height_forest_2019):
 
             # Calcula mapa de transição de desmatamento
             deforestation_mask = lulc_2019.eq(0).And(lulc.eq(1))
             deforestation = ee.Image.constant(number_height_forest_2019).updateMask(deforestation_mask)
             h_veg = gediHeight.where(deforestation_mask.eq(1), deforestation)
-
+            
             # Atualiza valores de floresta desmatada
             reforestation_mask = lulc_2019.eq(1).And(lulc.eq(0))
             h_veg = h_veg.where(reforestation_mask.eq(1), low_heights)
-            
+
             return h_veg
 
         # Processamento no caso da imagem ser posterior a 2019
@@ -2011,11 +2034,18 @@ def veg_height(lai, year, geometry):
             h_veg = gediHeight
 
             return h_veg    
+    
     except:
-        h_veg = gediHeight
+
+        # Equação para estimar altura da vegetação não florestal
+        a = ee.Image.constant(0.2)
+        b = ee.Image.constant(0.1)
+        low_heights = lai.multiply(a).add(b)
+        h_veg = gediHeight.where(gediHeight.eq(0), low_heights)
 
     # Correção para vegetação alta (limita altura a 25m)
     h_veg = h_veg.where(h_veg.gte(25), 25)
+
     return h_veg
 
 
