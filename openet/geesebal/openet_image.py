@@ -5,6 +5,7 @@ import ee
 import openet.core.common
 
 from openet.geesebal import openet_landsat as landsat
+from openet.geesebal import meteorology
 from openet.geesebal import model
 from openet.geesebal import utils
 import warnings
@@ -464,6 +465,31 @@ class Image:
         self,
     ):
 
+        # Meteo source
+        # TODO: Switch these variables to lazy_properties
+        # TODO: Add support for generic image collections
+        if (self._meteorology_source_inst == "NASA/NLDAS/FORA0125_H002") and \
+                (self._meteorology_source_daily == "IDAHO_EPSCOR/GRIDMET"):
+            tmin, tmax, tair, ux, rh, rso_inst, rso24h, tfac, ux_clamp = meteorology.nldas_gridmet(
+                self._time_start,
+                self._meteorology_source_inst,
+                self._meteorology_source_daily,
+            )
+
+        elif (self._meteorology_source_inst == "ECMWF/ERA5_LAND/HOURLY") and \
+                (self._meteorology_source_daily == "projects/openet/assets/meteorology/era5land/na/daily") or \
+                (self._meteorology_source_inst == "ECMWF/ERA5_LAND/HOURLY") and \
+                (self._meteorology_source_daily == "projects/openet/assets/meteorology/era5land/sa/daily"):
+
+            tmin, tmax, tair, ux, rh, rso_inst, rso24h, tfac, ux_clamp = meteorology.era5land(
+                self._time_start,
+                self._meteorology_source_inst,
+                self._meteorology_source_daily,
+            )
+
+        else:
+            raise Exception("Error: wrong daily or instant met data source assigned.")
+
         et = model.et(
             image=self.image,
             lai=self.lai,
@@ -473,8 +499,15 @@ class Image:
             albedo=self.albedo,
             emissivity=self.emissivity,
             savi=self.savi,
-            meteorology_source_inst=self._meteorology_source_inst,
-            meteorology_source_daily=self._meteorology_source_daily,
+            tmin=tmin,
+            tmax=tmax,
+            tair=tair,
+            ux=ux,
+            rh=rh,
+            rso_inst=rso_inst,
+            rso24h=rso24h,
+            tfac=tfac,
+            ux_clamp=ux_clamp,
             elev_product=self._elev_source,
             ndvi_cold=self._ndvi_cold,
             ndvi_hot=self._ndvi_hot,
@@ -484,7 +517,6 @@ class Image:
             geometry_image=self.geometry,
             proj=self.proj,
             coords=self.coords,
-            #et_reference = self.et_reference,
             max_iterations=self.max_iterations,
         )
 
