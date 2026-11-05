@@ -115,8 +115,9 @@ class Image:
         }
         # Build SCENE_ID from the (possibly merged) system:index
         scene_id = ee.List(ee.String(self._index).split("_")).slice(-3)
-        self._scene_id = (
-            ee.String(scene_id.get(0)).cat("_").cat(ee.String(scene_id.get(1))).cat("_").cat(ee.String(scene_id.get(2)))
+        self._scene_id = (ee.String(scene_id.get(0)).cat("_")
+                          .cat(ee.String(scene_id.get(1))).cat("_")
+                          .cat(ee.String(scene_id.get(2)))
         )
 
         # Build WRS2_TILE from the scene_id
@@ -175,21 +176,6 @@ class Image:
         self.crs = image.projection().crs()
         self.transform = ee.List(ee.Dictionary(ee.Algorithms.Describe(image.projection())).get("transform"))
 
-        # CGM - Testing out passing as a kwargs but could be dedicated function params
-        try:
-            self.cold_calibration_points = kwargs["cold_calibration_points"]
-        except:
-            self.cold_calibration_points = 1
-        try:
-            self.hot_calibration_points = kwargs["hot_calibration_points"]
-        except:
-            self.hot_calibration_points = 1
-
-        try:
-            self.max_iterations = kwargs["max_iterations"]
-        except:
-            self.max_iterations = 15
-
     @classmethod
     def from_image_id(cls, image_id, **kwargs):
         """Constructs an GEESEBAL Image instance from an image ID
@@ -210,11 +196,15 @@ class Image:
         # DEADBEEF - Should the supported image collection IDs and helper
         # function mappings be set in a property or method of the Image class?
         collection_methods = {
-            "LANDSAT/LT04/C02/T1_L2": "from_landsat_c2_sr",
-            "LANDSAT/LT05/C02/T1_L2": "from_landsat_c2_sr",
-            "LANDSAT/LE07/C02/T1_L2": "from_landsat_c2_sr",
-            "LANDSAT/LC08/C02/T1_L2": "from_landsat_c2_sr",
-            "LANDSAT/LC09/C02/T1_L2": "from_landsat_c2_sr",
+            'LANDSAT/LT04/C01/T1_SR': 'from_landsat_c1_sr',
+            'LANDSAT/LT05/C01/T1_SR': 'from_landsat_c1_sr',
+            'LANDSAT/LE07/C01/T1_SR': 'from_landsat_c1_sr',
+            'LANDSAT/LC08/C01/T1_SR': 'from_landsat_c1_sr',
+            'LANDSAT/LT04/C02/T1_L2': 'from_landsat_c2_sr',
+            'LANDSAT/LT05/C02/T1_L2': 'from_landsat_c2_sr',
+            'LANDSAT/LE07/C02/T1_L2': 'from_landsat_c2_sr',
+            'LANDSAT/LC08/C02/T1_L2': 'from_landsat_c2_sr',
+            'LANDSAT/LC09/C02/T1_L2': 'from_landsat_c2_sr',
         }
 
         try:
@@ -252,62 +242,50 @@ class Image:
         spacecraft_id = ee.String(sr_image.get("SPACECRAFT_ID"))
 
         # Rename bands to generic names
-        input_bands = ee.Dictionary(
-            {
-                "LANDSAT_4": ["SR_B1", "SR_B2", "SR_B3", "SR_B4", "SR_B5", "SR_B7", "ST_B6", "QA_PIXEL"],
-                "LANDSAT_5": ["SR_B1", "SR_B2", "SR_B3", "SR_B4", "SR_B5", "SR_B7", "ST_B6", "QA_PIXEL"],
-                "LANDSAT_7": ["SR_B1", "SR_B2", "SR_B3", "SR_B4", "SR_B5", "SR_B7", "ST_B6", "QA_PIXEL"],
-                "LANDSAT_8": ["SR_B1", "SR_B2", "SR_B3", "SR_B4", "SR_B5", "SR_B6", "SR_B7", "ST_B10", "QA_PIXEL"],
-                "LANDSAT_9": ["SR_B1", "SR_B2", "SR_B3", "SR_B4", "SR_B5", "SR_B6", "SR_B7", "ST_B10", "QA_PIXEL"],
-            }
-        )
-        output_bands = ee.Dictionary(
-            {
-                "LANDSAT_4": ["blue", "green", "red", "nir", "swir1", "swir2", "lst", "QA_PIXEL"],
-                "LANDSAT_5": ["blue", "green", "red", "nir", "swir1", "swir2", "lst", "QA_PIXEL"],
-                "LANDSAT_7": ["blue", "green", "red", "nir", "swir1", "swir2", "lst", "QA_PIXEL"],
-                "LANDSAT_8": ["ultra_blue", "blue", "green", "red", "nir", "swir1", "swir2", "lst", "QA_PIXEL"],
-                "LANDSAT_9": ["ultra_blue", "blue", "green", "red", "nir", "swir1", "swir2", "lst", "QA_PIXEL"],
-            }
-        )
+        input_bands = ee.Dictionary({
+                "LANDSAT_4": ["SR_B1", "SR_B2", "SR_B3", "SR_B4",
+                              "SR_B5", "SR_B7", "ST_B6", "QA_PIXEL"],
+                "LANDSAT_5": ["SR_B1", "SR_B2", "SR_B3", "SR_B4",
+                              "SR_B5", "SR_B7", "ST_B6", "QA_PIXEL"],
+                "LANDSAT_7": ["SR_B1", "SR_B2", "SR_B3", "SR_B4",
+                              "SR_B5", "SR_B7", "ST_B6", "QA_PIXEL"],
+                "LANDSAT_8": ["SR_B1", "SR_B2", "SR_B3", "SR_B4",
+                              "SR_B5", "SR_B6", "SR_B7", "ST_B10", "QA_PIXEL"],
+                "LANDSAT_9": ["SR_B1", "SR_B2", "SR_B3", "SR_B4",
+                              "SR_B5", "SR_B6", "SR_B7", "ST_B10", "QA_PIXEL"],
+        })
+        output_bands = ee.Dictionary({
+                "LANDSAT_4": ["blue", "green", "red", "nir",
+                              "swir1", "swir2", "lst", "QA_PIXEL"],
+                "LANDSAT_5": ["blue", "green", "red", "nir",
+                              "swir1", "swir2", "lst", "QA_PIXEL"],
+                "LANDSAT_7": ["blue", "green", "red", "nir",
+                              "swir1", "swir2", "lst", "QA_PIXEL"],
+                "LANDSAT_8": ["ultra_blue", "blue", "green", "red", "nir",
+                              "swir1", "swir2", "lst", "QA_PIXEL"],
+                "LANDSAT_9": ["ultra_blue", "blue", "green", "red", "nir",
+                              "swir1", "swir2", "lst", "QA_PIXEL"],
+        })
         scalars = ee.Dictionary(
             {
-                "LANDSAT_4": [0.0000275, 0.0000275, 0.0000275, 0.0000275, 0.0000275, 0.0000275, 0.00341802, 1],
-                "LANDSAT_5": [0.0000275, 0.0000275, 0.0000275, 0.0000275, 0.0000275, 0.0000275, 0.00341802, 1],
-                "LANDSAT_7": [0.0000275, 0.0000275, 0.0000275, 0.0000275, 0.0000275, 0.0000275, 0.00341802, 1],
-                "LANDSAT_8": [
-                    0.0000275,
-                    0.0000275,
-                    0.0000275,
-                    0.0000275,
-                    0.0000275,
-                    0.0000275,
-                    0.0000275,
-                    0.00341802,
-                    1,
-                ],
-                "LANDSAT_9": [
-                    0.0000275,
-                    0.0000275,
-                    0.0000275,
-                    0.0000275,
-                    0.0000275,
-                    0.0000275,
-                    0.0000275,
-                    0.00341802,
-                    1,
-                ],
-            }
-        )
-        offsets = ee.Dictionary(
-            {
+                "LANDSAT_4": [0.0000275, 0.0000275, 0.0000275, 0.0000275, 
+                              0.0000275, 0.0000275, 0.00341802, 1],
+                "LANDSAT_5": [0.0000275, 0.0000275, 0.0000275, 0.0000275, 
+                              0.0000275, 0.0000275, 0.00341802, 1],
+                "LANDSAT_7": [0.0000275, 0.0000275, 0.0000275, 0.0000275, 
+                              0.0000275, 0.0000275, 0.00341802, 1],
+                "LANDSAT_8": [0.0000275, 0.0000275, 0.0000275, 0.0000275, 0.0000275, 
+                              0.0000275, 0.0000275, 0.00341802, 1],
+                "LANDSAT_9": [0.0000275, 0.0000275, 0.0000275, 0.0000275, 0.0000275,
+                              0.0000275, 0.0000275, 0.00341802, 1],
+        })
+        offsets = ee.Dictionary({
                 "LANDSAT_4": [-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, 149.0, 0],
                 "LANDSAT_5": [-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, 149.0, 0],
                 "LANDSAT_7": [-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, 149.0, 0],
                 "LANDSAT_8": [-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, -0.2, 149.0, 0],
                 "LANDSAT_9": [-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, -0.2, 149.0, 0],
-            }
-        )
+        })
 
         prep_image = (
             sr_image.select(input_bands.get(spacecraft_id), output_bands.get(spacecraft_id))
@@ -328,66 +306,25 @@ class Image:
             landsat.cloud_mask_C2_l457(sr_image),
         )
 
-        # Water mask
-        water_mask = landsat.water_mask(product='GLO')
-        # albedo = ee.Algorithms.If(
-        #     spacecraft_id.compareTo(ee.String('LANDSAT_8')),
-        #     landsat.albedo_l457(prep_image),
-        #     landsat.albedo_l89(prep_image))
-        # cloud_mask = ee.Algorithms.If(
-        #     spacecraft_id.compareTo(ee.String('LANDSAT_8')),
-        #     landsat.cloud_mask_C2_l457(sr_image),
-        #     landsat.cloud_mask_C2_l89(sr_image))
-
-        # # Default the cloudmask flags to True if they were not
-        # # Eventually these will probably all default to True in openet.core
-        # if 'cirrus_flag' not in cloudmask_args.keys():
-        #     cloudmask_args['cirrus_flag'] = True
-        # if 'dilate_flag' not in cloudmask_args.keys():
-        #     cloudmask_args['dilate_flag'] = True
-        # if 'shadow_flag' not in cloudmask_args.keys():
-        #     cloudmask_args['shadow_flag'] = True
-        # if 'snow_flag' not in cloudmask_args.keys():
-        #     cloudmask_args['snow_flag'] = True
-        # cloud_mask = openet.core.common.landsat_c2_sr_cloud_mask(
-        #     sr_image, **cloudmask_args)
-
-        # Check if passing c2_lst_correct arguments
-        if "c2_lst_correct" in kwargs.keys():
-            assert isinstance(kwargs["c2_lst_correct"], bool), "selection type must be a boolean"
-            # Remove from kwargs since it is not a valid argument for Image init
-            c2_lst_correct = kwargs.pop("c2_lst_correct")
-        else:
-            c2_lst_correct = cls._C2_LST_CORRECT
-
-        if c2_lst_correct:
-            lst = openet.core.common.landsat_c2_sr_lst_correct(sr_image, landsat.ndvi(prep_image))
-        else:
-            lst = prep_image.select(["lst"])
-
         # Build the input image
         # Don't compute LST since it is being provided
-        input_image = ee.Image(
-            [
-                lst.rename(["lst"]),
-                landsat.ndvi(prep_image),
-                landsat.lai(prep_image),
-                landsat.savi(prep_image),
-                landsat.emissivity(prep_image),
-                landsat.ndwi(prep_image),
-                albedo,
-            ]
-        )
+        input_image = ee.Image([
+            prep_image.select(["lst"]),
+            landsat.ndvi(prep_image),
+            landsat.lai(prep_image),
+            landsat.savi(prep_image),
+            landsat.emissivity(prep_image),
+            landsat.ndwi(prep_image),
+            albedo,
+        ])
 
         # Apply the cloud mask and add properties
-        input_image = input_image.updateMask(cloud_mask).updateMask(water_mask.Not()).set(
-            {
+        input_image = input_image.updateMask(cloud_mask).set({
                 "system:index": sr_image.get("system:index"),
                 "system:time_start": sr_image.get("system:time_start"),
                 "system:id": sr_image.get("system:id"),
                 "SUN_ELEVATION": sr_image.get("SUN_ELEVATION"),
-            }
-        )
+        })
 
         # Instantiate the class
         return cls(input_image, **kwargs)
@@ -425,58 +362,42 @@ class Image:
         return ee.Image(output_images).set(self._properties)
 
     @lazy_property
-    def ndvi(
-        self,
-    ):
+    def ndvi(self):
 
         return self.image.select(["ndvi"]).set(self._properties)
 
     @lazy_property
-    def emissivity(
-        self,
-    ):
+    def emissivity(self):
 
         return self.image.select(["emissivity"]).set(self._properties)
 
     @lazy_property
-    def ndwi(
-        self,
-    ):
+    def ndwi(self):
 
         return self.image.select(["ndwi"]).set(self._properties)
 
     @lazy_property
-    def lai(
-        self,
-    ):
+    def lai(self):
 
         return self.image.select(["lai"]).set(self._properties)
 
     @lazy_property
-    def albedo(
-        self,
-    ):
+    def albedo(self):
 
         return self.image.select(["albedo"]).set(self._properties)
 
     @lazy_property
-    def savi(
-        self,
-    ):
+    def savi(self):
 
         return self.image.select(["savi"]).set(self._properties)
 
     @lazy_property
-    def lst(
-        self,
-    ):
+    def lst(self):
 
         return self.image.select(["lst"]).set(self._properties)
 
     @lazy_property
-    def et(
-        self,
-    ):
+    def et(self):
 
         et = model.et(
             image=self.image,
@@ -486,7 +407,6 @@ class Image:
             albedo=self.albedo,
             emissivity=self.emissivity,
             savi=self.savi,
-            # lai=self.lai,
             meteorology_source_inst=self._meteorology_source_inst,
             meteorology_source_daily=self._meteorology_source_daily,
             elev_product=self._elev_source,
@@ -497,27 +417,11 @@ class Image:
             time_start=self._time_start,
             geometry_image=self.geometry,
             proj=self.proj,
-            coords=self.coords,
-            #et_reference = self.et_reference,
-            cold_calibration_points=self.cold_calibration_points,
-            hot_calibration_points=self.hot_calibration_points,
-            max_iterations=self.max_iterations,
+            coords=self.coords
         )
 
         return et.set(self._properties)
 
-    # @lazy_property
-    # def et_fraction(self):
-    #
-    #     et_fr = model.et_fraction(
-    #         self.image,
-    #         self._time_start,
-    #         self.et,
-    #         self.et_reference_source, self.et_reference_band,
-    #         self.et_reference_factor,
-    #     )
-    #
-    #     return et_fr.set(self._properties)
 
     @lazy_property
     def et_reference(self):
@@ -558,26 +462,24 @@ class Image:
     # CGM - The mask band is currently needed for the time band
     # If the model does not do any additional masking we might be able to
     #   build the mask from the NDVI or QA band instead.
+
     @lazy_property
-    def mask(
-        self,
-    ):
+    def mask(self):
         """Mask of all active pixels (based on the final et)"""
-        return self.et.multiply(0).add(1).updateMask(1).uint8().rename(["mask"]).set(self._properties)
+
+        mask = self.et.multiply(0).add(1).updateMask(1).uint8().rename(['mask'])
+
+        return mask.set(self._properties)
 
     # CGM - The image class must have a "time" method for the interpolation
     # I'm not sure if it needs to be built from the active pixels mask
     #   or could be built from the NDVI or QA band instead.
     @lazy_property
-    def time(
-        self,
-    ):
+    def time(self):
         """Return an image of the 0 UTC time (in milliseconds)"""
 
-        return (
-            self.mask.double()
-            .multiply(0)
-            .add(utils.date_to_time_0utc(self._date))
-            .rename(["time"])
-            .set(self._properties)
-        )
+        time = self.mask \
+            .double().multiply(0).add(utils.date_to_time_0utc(self._date)) \
+            .rename(['time'])
+
+        return time.set(self._properties)
