@@ -9,7 +9,7 @@ DEG2RAD = math.pi / 180.0
 
 
 def et(
-    image,
+    image, 
     ndvi,
     ndwi,
     lst,
@@ -44,7 +44,7 @@ def et(
     ndwi : ee.Image
         Normalized difference water index.
     lst : ee.Image
-        Land Surface Temperature [K].
+        Land Surface Temperature [K] .
     albedo : ee.Image
         Surface albedo.
     emissivity : ee.Image
