@@ -27,6 +27,7 @@ def et(
     geometry_image,
     proj,
     coords,
+    flag_g='g_brazil'
 ):
     """
     Daily Evapotranspiration [mm day-1].
@@ -69,7 +70,9 @@ def et(
         Landsat image projection.
     coords : ee.Image
         Landsat image Latitude and longitude.
-
+    flag_g: str (optional)
+        Geographic identifier. 
+        Options: 'default' to global and 'g_brazil' to Brazil.
     Returns
     -------
     ee.Image
@@ -147,25 +150,25 @@ def et(
             rso_inst, sun_elevation, cos_zn)
         
         # Instantaneous soil heat flux [W m-2]
-        g_inst = soil_heat_flux(rad_inst, ndvi, albedo, lst, ndwi, year)
+        g_inst = soil_heat_flux(rad_inst, ndvi, albedo, lst, ndwi, year, flag_g)
         
         # Daily ney radiation [W m-2]
         rad_24h = radiation_24h(time_start, tmax, tmin, elev, rso24h)
 
         # Cold pixels
-        cold_pixels = cold_pixel_v02(
+        cold_pixels = cold_pixel(
             ndvi, ndwi, lst_dem, top_ndvi, coldest_lst,
             geometry_image, coords, elev, proj)
 
         n_Ts_cold = ee.Number(cold_pixels.get('temp'));  
         
         # Hot pixels
-        hot_pixels = hot_pixel_v02(
+        hot_pixels = hot_pixel(
             ndvi, ndwi, lst_dem, rad_inst, g_inst, ndvi_hot, lst_hot,
             geometry_image, coords, tfac, elev, proj)
         
         # Instantaneous sensible heat flux [W m-2]
-        h_inst = sensible_heat_flux_v02(
+        h_inst = sensible_heat_flux(
             image.addBands(lst_dem.rename('lst_dem')), 
             ux, n_Ts_cold, hot_pixels, elev)
         
@@ -875,7 +878,7 @@ def radiation_inst(dem, lst, emissivity, albedo, tair, rh, swdown_inst, sun_elev
     return rn_inst.rename('rn_inst')
 
 
-def soil_heat_flux(rn, ndvi, albedo, lst, ndwi, year, flag_g='g_brazil'):
+def soil_heat_flux(rn, ndvi, albedo, lst, ndwi, year, flag_g):
     """
     Instantaneous Soil Heat Flux [W m-2]
 
@@ -906,52 +909,44 @@ def soil_heat_flux(rn, ndvi, albedo, lst, ndwi, year, flag_g='g_brazil'):
 
     """
 
+    # Soil heat flux [W m-2] 
+    g_crop = rn.expression(
+            'rn * (lst - 273.15) * (0.0038 + (0.0074 * albedo)) * (1 - 0.98 * (ndvi ** 4))',
+            {'rn': rn, 'ndvi': ndvi, 'albedo': albedo, 'lst': lst},
+        )
+
+    # G global
     if flag_g == 'default':
-        # Soil heat flux [W m-2] 
-        g = rn.expression(
-            'rn * (lst - 273.15) * (0.0038 + (0.0074 * albedo)) * (1 - 0.98 * (ndvi ** 4))',
-            {'rn': rn, 'ndvi': ndvi, 'albedo': albedo, 'lst': lst},
-        )
+        g = g_crop
 
-        # Considering G as 50% of net radiation for water bodies
-        g = g.where(ndwi.gt(0), rn.multiply(0.5))
-
-
-    if flag_g == 'g_brazil':
-        #Soil heat flux [W m-2] for croplands 
-        g_crop = rn.expression(
-            'rn * (lst - 273.15) * (0.0038 + (0.0074 * albedo)) * (1 - 0.98 * (ndvi ** 4))',
-            {'rn': rn, 'ndvi': ndvi, 'albedo': albedo, 'lst': lst},
-        )
-
+    # G for Brazil
+    elif flag_g == 'g_brazil':
         # Soil heat flux [W m-2] for all classes except croplands (Ruhoff, 2019)
         g_noncrop = rn.expression(
             'rn * lst * (0.015*albedo) * (1 - 0.8*(ndvi ** (1/3)))',
             {'rn': rn, 'ndvi': ndvi, 'albedo': albedo, 'lst': lst},
         )
 
-        # Image classification
+        # MapBiomas classification for the image year
         year_min = 1985
-        year_max = 2023
+        year_max = 2025
         year_condition = ee.Number(year).max(year_min).min(year_max)
-
-        # Select classification corresponding to the year of the image
         band = ee.String('classification_').cat(year_condition.format())
-        lc = ee.Image('projects/mapbiomas-public/assets/brazil/lulc/collection9/mapbiomas_collection90_integration_v1').select(band)
-
-        # Reclassify Mapbiomas and extract cropland mask
+        lc = ee.Image('projects/mapbiomas-public/assets/brazil/lulc/collection11/mapbiomas_brazil_collection11_coverage_v3').select(band)
         map_classes = ee.List([1, 3, 4, 5, 6, 49, 10, 11, 12, 32, 29, 50, 14, 15, 18, 19, 39, 20, 40, 62, 41, 36, 46, 47, 35, 48, 9, 21, 22, 23, 24, 30, 75, 25, 26, 33, 31, 27])
         new_classes = ee.List([1, 1, 2, 0, 0,  0,  0,  0,  3,  0,  0,  0,  0,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4,  4, 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0])
         lulc = lc.select(band).remap(map_classes, new_classes)
         crop = lulc.eq(4)
 
-        # Set G for crop and noncrop areas
         g = g_noncrop.where(crop, g_crop)
 
-        # Considering G as 50% of net radiation for water bodies
-        g = g.where(ndwi.gt(0), rn.multiply(0.5))
+    else:
+        raise ValueError(f"Invalid flag_g: {flag_g}. Use 'default' or 'g_brazil'.")
 
-        return g.rename('g_inst')
+    # Considering G as 50% of net radiation for water bodies
+    g = g.where(ndwi.gt(0), rn.multiply(0.5))
+
+    return g.rename('g_inst')
 
 
 def radiation_24h(time_start, tmax, tmin, elev, rso24h):
@@ -1038,7 +1033,7 @@ def radiation_24h(time_start, tmax, tmin, elev, rso24h):
     return rn.rename('rad_24h')
 
 
-def cold_pixel_v02(ndvi, ndwi, lst_dem, ndvi_cold, lst_cold, geometry_image, coords, elev, proj):
+def cold_pixel(ndvi, ndwi, lst_dem, ndvi_cold, lst_cold, geometry_image, coords, elev, proj):
     """
     Simplified CIMEC method to select the cold pixel
 
@@ -1130,7 +1125,7 @@ def cold_pixel_v02(ndvi, ndwi, lst_dem, ndvi_cold, lst_cold, geometry_image, coo
         geometry=geometry_image,
         scale=30,
         maxPixels=1e9
-    ).combine(ee.Dictionary({'lst_nw': 330}), False))
+    ).combine(ee.Dictionary({'lst_nw': 350}), False))
           
     # Get low lst value
     n_perc_low_LST = ee.Number(d_perc_low_LST.get('lst_nw'))
@@ -1182,7 +1177,7 @@ def cold_pixel_v02(ndvi, ndwi, lst_dem, ndvi_cold, lst_cold, geometry_image, coo
     return d_cold_pixel
 
 
-def hot_pixel_v02(ndvi, ndwi, lst_dem, rn, g, ndvi_hot, lst_hot, geometry_image, coords, tfac, elev, proj): 
+def hot_pixel(ndvi, ndwi, lst_dem, rn, g, ndvi_hot, lst_hot, geometry_image, coords, tfac, elev, proj): 
     """
     Simplified CIMEC method to select the hot pixel
 
@@ -1344,7 +1339,7 @@ def hot_pixel_v02(ndvi, ndwi, lst_dem, rn, g, ndvi_hot, lst_hot, geometry_image,
         )
 
 
-def sensible_heat_flux_v02(image, ux, n_Ts_cold, d_hot_pixel, elev):
+def sensible_heat_flux(image, ux, n_Ts_cold, d_hot_pixel, elev):
     """
     Instantaneous Sensible Heat Flux [W m-2]
 
