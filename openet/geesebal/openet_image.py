@@ -89,12 +89,6 @@ class Image:
             et_reference_resample : {'nearest', 'bilinear', 'bicubic', None}
                 Reference ET resampling.  The default is None which is
                 equivalent to nearest neighbor resampling.
-            cold_calibration_points : int
-                Number of cold calibration points (the default is 1).
-            hot_calibration_points : int
-                Number of hot calibration points (the default is 1).
-            max_iterations : int
-                Maximum number of iterations (the default is 15).
 
         Notes
         -----
@@ -196,10 +190,6 @@ class Image:
         # DEADBEEF - Should the supported image collection IDs and helper
         # function mappings be set in a property or method of the Image class?
         collection_methods = {
-            'LANDSAT/LT04/C01/T1_SR': 'from_landsat_c1_sr',
-            'LANDSAT/LT05/C01/T1_SR': 'from_landsat_c1_sr',
-            'LANDSAT/LE07/C01/T1_SR': 'from_landsat_c1_sr',
-            'LANDSAT/LC08/C01/T1_SR': 'from_landsat_c1_sr',
             'LANDSAT/LT04/C02/T1_L2': 'from_landsat_c2_sr',
             'LANDSAT/LT05/C02/T1_L2': 'from_landsat_c2_sr',
             'LANDSAT/LE07/C02/T1_L2': 'from_landsat_c2_sr',
@@ -243,48 +233,47 @@ class Image:
 
         # Rename bands to generic names
         input_bands = ee.Dictionary({
-                "LANDSAT_4": ["SR_B1", "SR_B2", "SR_B3", "SR_B4",
-                              "SR_B5", "SR_B7", "ST_B6", "QA_PIXEL"],
-                "LANDSAT_5": ["SR_B1", "SR_B2", "SR_B3", "SR_B4",
-                              "SR_B5", "SR_B7", "ST_B6", "QA_PIXEL"],
-                "LANDSAT_7": ["SR_B1", "SR_B2", "SR_B3", "SR_B4",
-                              "SR_B5", "SR_B7", "ST_B6", "QA_PIXEL"],
-                "LANDSAT_8": ["SR_B1", "SR_B2", "SR_B3", "SR_B4",
-                              "SR_B5", "SR_B6", "SR_B7", "ST_B10", "QA_PIXEL"],
-                "LANDSAT_9": ["SR_B1", "SR_B2", "SR_B3", "SR_B4",
-                              "SR_B5", "SR_B6", "SR_B7", "ST_B10", "QA_PIXEL"],
+            "LANDSAT_4": ["SR_B1", "SR_B2", "SR_B3", "SR_B4",
+                          "SR_B5", "SR_B7", "ST_B6", "QA_PIXEL"],
+            "LANDSAT_5": ["SR_B1", "SR_B2", "SR_B3", "SR_B4",
+                          "SR_B5", "SR_B7", "ST_B6", "QA_PIXEL"],
+            "LANDSAT_7": ["SR_B1", "SR_B2", "SR_B3", "SR_B4",
+                          "SR_B5", "SR_B7", "ST_B6", "QA_PIXEL"],
+            "LANDSAT_8": ["SR_B1", "SR_B2", "SR_B3", "SR_B4",
+                          "SR_B5", "SR_B6", "SR_B7", "ST_B10", "QA_PIXEL"],
+            "LANDSAT_9": ["SR_B1", "SR_B2", "SR_B3", "SR_B4",
+                          "SR_B5", "SR_B6", "SR_B7", "ST_B10", "QA_PIXEL"],
         })
         output_bands = ee.Dictionary({
-                "LANDSAT_4": ["blue", "green", "red", "nir",
-                              "swir1", "swir2", "lst", "QA_PIXEL"],
-                "LANDSAT_5": ["blue", "green", "red", "nir",
-                              "swir1", "swir2", "lst", "QA_PIXEL"],
-                "LANDSAT_7": ["blue", "green", "red", "nir",
-                              "swir1", "swir2", "lst", "QA_PIXEL"],
-                "LANDSAT_8": ["ultra_blue", "blue", "green", "red", "nir",
-                              "swir1", "swir2", "lst", "QA_PIXEL"],
-                "LANDSAT_9": ["ultra_blue", "blue", "green", "red", "nir",
-                              "swir1", "swir2", "lst", "QA_PIXEL"],
+            "LANDSAT_4": ["blue", "green", "red", "nir",
+                          "swir1", "swir2", "lst", "QA_PIXEL"],
+            "LANDSAT_5": ["blue", "green", "red", "nir",
+                          "swir1", "swir2", "lst", "QA_PIXEL"],
+            "LANDSAT_7": ["blue", "green", "red", "nir",
+                          "swir1", "swir2", "lst", "QA_PIXEL"],
+            "LANDSAT_8": ["ultra_blue", "blue", "green", "red", "nir",
+                          "swir1", "swir2", "lst", "QA_PIXEL"],
+            "LANDSAT_9": ["ultra_blue", "blue", "green", "red", "nir",
+                          "swir1", "swir2", "lst", "QA_PIXEL"],
         })
-        scalars = ee.Dictionary(
-            {
-                "LANDSAT_4": [0.0000275, 0.0000275, 0.0000275, 0.0000275, 
-                              0.0000275, 0.0000275, 0.00341802, 1],
-                "LANDSAT_5": [0.0000275, 0.0000275, 0.0000275, 0.0000275, 
-                              0.0000275, 0.0000275, 0.00341802, 1],
-                "LANDSAT_7": [0.0000275, 0.0000275, 0.0000275, 0.0000275, 
-                              0.0000275, 0.0000275, 0.00341802, 1],
-                "LANDSAT_8": [0.0000275, 0.0000275, 0.0000275, 0.0000275, 0.0000275, 
-                              0.0000275, 0.0000275, 0.00341802, 1],
-                "LANDSAT_9": [0.0000275, 0.0000275, 0.0000275, 0.0000275, 0.0000275,
-                              0.0000275, 0.0000275, 0.00341802, 1],
+        scalars = ee.Dictionary({
+            "LANDSAT_4": [0.0000275, 0.0000275, 0.0000275, 0.0000275,
+                          0.0000275, 0.0000275, 0.00341802, 1],
+            "LANDSAT_5": [0.0000275, 0.0000275, 0.0000275, 0.0000275,
+                          0.0000275, 0.0000275, 0.00341802, 1],
+            "LANDSAT_7": [0.0000275, 0.0000275, 0.0000275, 0.0000275,
+                          0.0000275, 0.0000275, 0.00341802, 1],
+            "LANDSAT_8": [0.0000275, 0.0000275, 0.0000275, 0.0000275, 0.0000275,
+                          0.0000275, 0.0000275, 0.00341802, 1],
+            "LANDSAT_9": [0.0000275, 0.0000275, 0.0000275, 0.0000275, 0.0000275,
+                          0.0000275, 0.0000275, 0.00341802, 1],
         })
         offsets = ee.Dictionary({
-                "LANDSAT_4": [-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, 149.0, 0],
-                "LANDSAT_5": [-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, 149.0, 0],
-                "LANDSAT_7": [-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, 149.0, 0],
-                "LANDSAT_8": [-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, -0.2, 149.0, 0],
-                "LANDSAT_9": [-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, -0.2, 149.0, 0],
+            "LANDSAT_4": [-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, 149.0, 0],
+            "LANDSAT_5": [-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, 149.0, 0],
+            "LANDSAT_7": [-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, 149.0, 0],
+            "LANDSAT_8": [-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, -0.2, 149.0, 0],
+            "LANDSAT_9": [-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, -0.2, 149.0, 0],
         })
 
         prep_image = (
@@ -320,10 +309,10 @@ class Image:
 
         # Apply the cloud mask and add properties
         input_image = input_image.updateMask(cloud_mask).set({
-                "system:index": sr_image.get("system:index"),
-                "system:time_start": sr_image.get("system:time_start"),
-                "system:id": sr_image.get("system:id"),
-                "SUN_ELEVATION": sr_image.get("SUN_ELEVATION"),
+            "system:index": sr_image.get("system:index"),
+            "system:time_start": sr_image.get("system:time_start"),
+            "system:id": sr_image.get("system:id"),
+            "SUN_ELEVATION": sr_image.get("SUN_ELEVATION"),
         })
 
         # Instantiate the class
@@ -399,6 +388,28 @@ class Image:
     @lazy_property
     def et(self):
 
+        # Meteo source
+        # TODO: Switch these variables to lazy_properties
+        # TODO: Add support for generic image collections
+        # TODO: Add support for other common sources
+        if (meteorology_source_inst == 'NASA/NLDAS/FORA0125_H002') and \
+                (meteorology_source_daily == 'IDAHO_EPSCOR/GRIDMET'):
+            tmin, tmax, tair, ux, rh, rso_inst, rso_24h, tfac, ux_clamp = meteorology.nldas_gridmet(
+                self._time_start, self._meteorology_source_inst, self._meteorology_source_daily,
+            )
+        elif ((meteorology_source_inst == "ECMWF/ERA5_LAND/HOURLY") and
+              ('era5land' in meteorology_source_daily.lower() or
+               'era5_land' in meteorology_source_daily.lower())):
+            # projects/openet/assets/meteorology/era5land/na/daily
+            # projects/openet/assets/meteorology/era5land/sa/daily
+            # projects/openet/assets/meteorology/era5land/eu/daily
+            # ECMWF/ERA5_LAND/DAILY_AGGR
+            tmin, tmax, tair, ux, rh, rso_inst, rso_24h, tfac, ux_clamp = meteorology.era5land(
+                self._time_start, self._meteorology_source_inst, self._meteorology_source_daily,
+            )
+        else:
+            raise Exception("Unsupported meteorology source(s)")
+
         et = model.et(
             image=self.image,
             ndvi=self.ndvi,
@@ -407,8 +418,15 @@ class Image:
             albedo=self.albedo,
             emissivity=self.emissivity,
             savi=self.savi,
-            meteorology_source_inst=self._meteorology_source_inst,
-            meteorology_source_daily=self._meteorology_source_daily,
+            tmin=tmin,
+            tmax=tmax,
+            tair=tair,
+            ux=ux,
+            rh=rh,
+            rso_inst=rso_inst,
+            rso_24h=rso_24h,
+            tfac=tfac,
+            ux_clamp=ux_clamp,
             elev_product=self._elev_source,
             ndvi_cold=self._ndvi_cold,
             ndvi_hot=self._ndvi_hot,
@@ -421,7 +439,6 @@ class Image:
         )
 
         return et.set(self._properties)
-
 
     @lazy_property
     def et_reference(self):
@@ -462,7 +479,6 @@ class Image:
     # CGM - The mask band is currently needed for the time band
     # If the model does not do any additional masking we might be able to
     #   build the mask from the NDVI or QA band instead.
-
     @lazy_property
     def mask(self):
         """Mask of all active pixels (based on the final et)"""
@@ -478,8 +494,6 @@ class Image:
     def time(self):
         """Return an image of the 0 UTC time (in milliseconds)"""
 
-        time = self.mask \
-            .double().multiply(0).add(utils.date_to_time_0utc(self._date)) \
-            .rename(['time'])
+        time = self.mask.double().multiply(0).add(utils.date_to_time_0utc(self._date)).rename(['time'])
 
         return time.set(self._properties)

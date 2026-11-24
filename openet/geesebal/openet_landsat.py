@@ -50,8 +50,7 @@ def fipar(landsat_image):
     """
     ndvi_clamp = ndvi(landsat_image).clamp(0.0, 1.0)
 
-    return ndvi_clamp.multiply(1).subtract(0.05).clamp(0.0, 1.0)\
-        .rename('fipar')
+    return ndvi_clamp.multiply(1).subtract(0.05).clamp(0.0, 1.0).rename('fipar')
 
 
 def lai(landsat_image):
@@ -126,8 +125,7 @@ def emissivity(landsat_image):
     ----------
 
     """
-    return lai(landsat_image).multiply(0.01).add(0.95).min(0.98)\
-        .rename('emissivity')
+    return lai(landsat_image).multiply(0.01).add(0.95).min(0.98).rename('emissivity')
 
 
 def lst(landsat_image):
