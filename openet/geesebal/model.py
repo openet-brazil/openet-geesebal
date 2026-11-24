@@ -2,14 +2,15 @@ import math
 
 import ee
 
-# from openet.geesebal import openet_landsat as landsat
 from openet.geesebal import utils
 
 DEG2RAD = math.pi / 180.0
 
 
-# TODO: Switch "elev_product" to "elevation", "slope", and "aspect variables
-# TODO: savi variable is not currently used
+# TODO: savi variable is not currently used but is being read from image instead
+#   The image input could probably be dropped if sun_elevation was passed in instead
+# TODO: elev_product should be parsed in image so that it is already "elevation"
+#   and doesn't need to have the band selected everywhere
 def et(
     image, 
     ndvi,
@@ -26,7 +27,6 @@ def et(
     rso_inst,
     rso_24h,
     tfac,
-    ux_clamp,
     elev_product,
     ndvi_cold,
     ndvi_hot,
@@ -73,8 +73,6 @@ def et(
         Daily incoming shortwave radiation [W m-2].
     tfac : ee.Image
         Temperature adjustment offset.
-    ux_clamp : ee.Image
-
     elev_product : ee.Image
         Elevation [m].
     ndvi_cold : ee.Number, int

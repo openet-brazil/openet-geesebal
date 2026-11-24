@@ -16,7 +16,8 @@ import openet.geesebal.utils as utils
 )
 def test_soil_heat_flux(rn, ndvi, albedo, lst_dem, ndwi, expected, tol=0.1):
     output = utils.constant_image_value(model.soil_heat_flux(
-        rn=ee.Image.constant(rn), ndvi=ee.Image.constant(ndvi),
+        rn=ee.Image.constant(rn),
+        ndvi=ee.Image.constant(ndvi),
         albedo=ee.Image.constant(albedo),
         lst_dem=ee.Image.constant(lst_dem),
         ndwi=ee.Image.constant(ndwi),

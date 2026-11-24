@@ -5,6 +5,7 @@ import ee
 import openet.core.common
 
 from openet.geesebal import openet_landsat as landsat
+from openet.geesebal import meteorology as meteorology
 from openet.geesebal import model
 from openet.geesebal import utils
 import warnings
@@ -426,7 +427,6 @@ class Image:
             rso_inst=rso_inst,
             rso_24h=rso_24h,
             tfac=tfac,
-            ux_clamp=ux_clamp,
             elev_product=self._elev_source,
             ndvi_cold=self._ndvi_cold,
             ndvi_hot=self._ndvi_hot,
