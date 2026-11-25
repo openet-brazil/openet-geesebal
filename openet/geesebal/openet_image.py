@@ -393,19 +393,21 @@ class Image:
         # TODO: Switch these variables to lazy_properties
         # TODO: Add support for generic image collections
         # TODO: Add support for other common sources
-        if (meteorology_source_inst == 'NASA/NLDAS/FORA0125_H002') and \
-                (meteorology_source_daily == 'IDAHO_EPSCOR/GRIDMET'):
-            tmin, tmax, tair, ux, rh, rso_inst, rso_24h, tfac, ux_clamp = meteorology.nldas_gridmet(
+        if (self._meteorology_source_inst == 'NASA/NLDAS/FORA0125_H002') and \
+                (self._meteorology_source_daily == 'IDAHO_EPSCOR/GRIDMET'):
+            tmin, tmax, tair, ux, rh, rso_inst, rso_24h, tfac = meteorology.nldas_gridmet(
                 self._time_start, self._meteorology_source_inst, self._meteorology_source_daily,
             )
-        elif ((meteorology_source_inst == "ECMWF/ERA5_LAND/HOURLY") and
-              ('era5land' in meteorology_source_daily.lower() or
-               'era5_land' in meteorology_source_daily.lower())):
+        elif ((self._meteorology_source_inst == "ECMWF/ERA5_LAND/HOURLY") and
+              ('era5land' in self._meteorology_source_daily.lower() or
+               'era5_land' in self._meteorology_source_daily.lower())):
             # projects/openet/assets/meteorology/era5land/na/daily
             # projects/openet/assets/meteorology/era5land/sa/daily
             # projects/openet/assets/meteorology/era5land/eu/daily
             # ECMWF/ERA5_LAND/DAILY_AGGR
-            tmin, tmax, tair, ux, rh, rso_inst, rso_24h, tfac, ux_clamp = meteorology.era5land(
+            #   Downwelling solar band name is slightly different in this function
+            #   and may not run as is
+            tmin, tmax, tair, ux, rh, rso_inst, rso_24h, tfac = meteorology.era5land(
                 self._time_start, self._meteorology_source_inst, self._meteorology_source_daily,
             )
         else:
