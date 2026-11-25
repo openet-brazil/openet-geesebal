@@ -105,24 +105,18 @@ def et(
         algorithm and Google Earth Engine cloud computing,
         ISPRS Journal of Photogrammetry and Remote Sensing, Vol 178,
         https://doi.org/10.1016/j.isprsjprs.2021.05.018
-
     """
 
     # Image properties
     date = ee.Date(time_start)
-    year = ee.Number(date.get('year'))    
-    hour = ee.Number(date.get('hour'))
-    minutes = ee.Number(date.get('minutes'))
+    year = ee.Number(date.get('year'))
 
     # Endmembers
     top_ndvi = ee.Number(ndvi_cold)
     coldest_lst = ee.Number(lst_cold)
-
-    # Sun elevation []
-    # sun_elevation = ee.Number(image.get('SUN_ELEVATION'))
     
     # Terrain cos
-    cos_zn = cos_terrain(time_start, elevation, hour, minutes, coords)
+    cos_zn = cos_terrain(elevation, time_start, coords)
 
     # LL: iterative process or endmembers selections may return empty values
     # in this case, return an empty image instead of broken the code
@@ -131,9 +125,7 @@ def et(
         tair_dem = tair_dem_correction(tmin, tmax, elevation)
 
         # Land surface temperature correction [K]
-        lst_dem = lst_correction(
-            time_start, lst, elevation, tair_dem, rh, sun_elevation, hour, minutes, coords
-        )
+        lst_dem = lst_correction(lst, elevation, tair_dem, rh, sun_elevation, time_start, coords)
         
         # Instantaneous net radiation using reanalysis dataset [W m-2]
         rad_inst = radiation_inst(
@@ -194,9 +186,6 @@ def tao_sw(elev, tair, rh, cos_z0):
     Returns
     -------
     ee.Image
-
-    References
-    ----------
     """
     # Atmospheric pressure [kPa] (FAO56 Eqn 7)
     pres = elev.expression('101.3 * ((293 - (0.0065 * Z)) / 293) ** 5.26 ', {'Z': elev})
@@ -219,32 +208,28 @@ def tao_sw(elev, tair, rh, cos_z0):
     return tao_sw_img.rename('tao_sw')
 
 
-def cos_terrain(time_start, elev, hour, minutes, coords):
+def cos_terrain(elev, time_start, coords):
     """
     Cosine zenith angle elevation (Allen et al. (2006)).
 
     Parameters
     ----------
-    time_start : str
-        Image property: time start of the image.
     elev : ee.Image
         Elevation [m].
-    hour : ee.Number, int
-        Hour.
-    minutes : ee.Number, int
-        Minutes.
+    time_start : str
+        Image property: time start of the image.
     coords : ee.Image
         Latitude and longitude of the image.
 
     Returns
     -------
     ee.Image
-
-    References
-    ----------
     """
+
     # Day of the year
     doy = ee.Date(time_start).getRelative('day', 'year').add(1)
+    hour = ee.Number(ee.Date(time_start).get('hour'))
+    minutes = ee.Number(ee.Date(time_start).get('minutes'))
 
     # Slope and aspect
     slope_aspect = ee.Terrain.products(elev)
@@ -299,10 +284,8 @@ def tair_dem_correction(tmin, tmax, elev):
     Returns
     -------
     ee.Image
-
-    References
-    ---------
     """
+
     tmin_dem = tmin.expression(
         'temp - 0.0065 * (dem - alt_meteo)', 
         {'temp': tmin, 'dem': elev, 'alt_meteo': ee.Number(2)}
@@ -318,15 +301,12 @@ def tair_dem_correction(tmin, tmax, elev):
     return tair_dem.rename('tair_dem')
 
 
-# TODO: Why are we passing in time_start and hour/minutes?
-def lst_correction(time_start, lst, elev, tair, rh, sun_elevation, hour, minutes, coords):
+def lst_correction(lst, elev, tair, rh, sun_elevation, time_start, coords):
     """
     Correct declivity and aspect effects from Land Surface Temperature.
 
     Parameters
     ----------
-    time_start : str
-        Image property: time start of the image.
     lst : ee.Image
         Land surface temperature [K]
     elev : ee.Image
@@ -337,10 +317,8 @@ def lst_correction(time_start, lst, elev, tair, rh, sun_elevation, hour, minutes
         Relative Humidity [%].
     sun_elevation : ee.Number, ee.Image
         Sun elevation angle.
-    hour : ee.Number, int
-        Hour.
-    minutes : ee.Number, int
-        Minutes.
+    time_start : str
+        Image property: time start of the image.
     coords : ee.Image
         Landsat image Latitude and longitude.
 
@@ -352,7 +330,7 @@ def lst_correction(time_start, lst, elev, tair, rh, sun_elevation, hour, minutes
     ----------
     Jaafar, H.H., Ahmad, F.A., 2019. Time series trends of Landsat-based ET using automated
     calibration in METRIC and SEBAL: The Bekaa Valley, Lebanon. Remote Sens.
-    Environ. https://doi.org/https://doi.org/10.1016/j.rse.2018.12.033. 
+    Environ. https://doi.org/https://doi.org/10.1016/j.rse.2018.12.033.
     """
 
     # Solar constant [W m-2]
@@ -382,7 +360,7 @@ def lst_correction(time_start, lst, elev, tair, rh, sun_elevation, hour, minutes
     # Correcting land surface temperature [K] with temperature lapse rate
     temp_corr = lst.add(elev.multiply(temp_lapse_rate))
 
-    cos_zn = cos_terrain(time_start, elev, hour, minutes, coords)
+    cos_zn = cos_terrain(elev, time_start, coords)
 
     # Broad-band atmospheric transmissivity (ASCE-EWRI (2005))
     tao_sw_img = tao_sw(elev, tair, rh, cos_zn)
@@ -418,10 +396,6 @@ def homogeneous_mask(ndvi, proj):
     Returns
     -------
     ee.Image
-
-    References
-    ----------
-
     """
 
     # Calculate NDVI standard deviation in pixel neighborhood
@@ -464,9 +438,6 @@ def slope_mask(elev, proj):
     Returns
     -------
     ee.Image
-    
-    References
-    ----------
     """
 
     dem_slope = (
@@ -478,7 +449,7 @@ def slope_mask(elev, proj):
     return ee.Image(slp_mask)
 
 
-def radiation_inst(lst, emissivity, albedo, tair, rh, elev, swdown_inst, sun_elevation, cos_terrain):
+def radiation_inst(lst, emissivity, albedo, tair, rh, elev, swdown_inst, sun_elevation, cos_zn):
     """
     Instantaneous Net Radiation [W m-2]
 
@@ -500,30 +471,24 @@ def radiation_inst(lst, emissivity, albedo, tair, rh, elev, swdown_inst, sun_ele
         Instantaneous Short Wave radiation [W m-2].
     sun_elevation : ee.Number, int
         Sun elevation information.
-    cos_terrain : ee.Image
+    cos_zn : ee.Image
         Solar zenith angle cos (aspect/slope).
 
     Returns
     -------
     ee.Image
-
-    References
-    ----------
-
     """
 
     # Up long wave radiation [W m-2]
     rad_long_up = lst.expression('emi * 5.67e-8 * (lst ** 4)', {'emi': emissivity, 'lst': lst})
 
     # Transmissivity 
-    tao_sw_img = tao_sw(elev, tair, rh, cos_terrain)
-
-    log_taosw = tao_sw_img.log()
+    tao_sw_img = tao_sw(elev, tair, rh, cos_zn)
 
     # Down long wave radiation [W m-2] 
     rad_long_down = lst.expression(
         '(0.85 * (- log_taosw) ** 0.09) * 5.67e-8 * (n_Ts_cold ** 4)',
-        {'log_taosw': log_taosw, 'n_Ts_cold': tair.add(273.15)},
+        {'log_taosw': tao_sw_img.log(), 'n_Ts_cold': tair.add(273.15)},
     )
 
     # Solar zenith
@@ -532,7 +497,7 @@ def radiation_inst(lst, emissivity, albedo, tair, rh, elev, swdown_inst, sun_ele
     cos_zeni = solar_zenith_radians.cos()
 
     # Obtaining a Short down wave radiation correcting mountainous effect 
-    swdown_inst_dem = swdown_inst.multiply(cos_terrain.divide(cos_zeni))
+    swdown_inst_dem = swdown_inst.multiply(cos_zn.divide(cos_zeni))
 
     # Net radiation [W m-2]
     rn_inst = lst.expression(
@@ -574,10 +539,6 @@ def soil_heat_flux(rn, ndvi, albedo, lst, ndwi, flag_g, year):
     Returns
     -------
     ee.Image
-
-    References
-    ----------
-
     """
 
     # Soil heat flux [W m-2] 
@@ -648,7 +609,6 @@ def radiation_24h(time_start, tmax, tmin, elev, rso_24h):
     .. [FAO56] Allen, R., Pereira, L., Raes, D., & Smith, M. (1998).
        Crop evapotranspiration: Guidelines for computing crop water
        requirements. FAO Irrigation and Drainage Paper (Vol. 56).
-
     """
 
     # Convert to MJ m-2
@@ -747,12 +707,10 @@ def cold_pixel(ndvi, ndwi, lst_dem, ndvi_cold, lst_cold, geometry_image, coords,
 
     References
     ----------
-
     ..[Allen2013] Allen, R.G., Burnett, B., Kramber, W., Huntington, J.,
         Kjaersgaard, J., Kilic, A., Kelly, C., Trezza, R., (2013).
         Automated Calibration of the METRIC-Landsat Evapotranspiration Process.
         JAWRA J. Am. Water Resour. Assoc. 49, 563–576.
-
     """
 
     # Filtering only positive ndvi values
@@ -905,12 +863,10 @@ def hot_pixel(ndvi, ndwi, lst_dem, rn, g, ndvi_hot, lst_hot, geometry_image, coo
 
     References
     ----------
-
     .. [Allen2013] Allen, R.G., Burnett, B., Kramber, W., Huntington, J.,
         Kjaersgaard, J., Kilic, A., Kelly, C., Trezza, R., (2013).
         Automated Calibration of the METRIC-Landsat Evapotranspiration Process.
         JAWRA J. Am. Water Resour. Assoc. 49, 563–576.
-    ..
     """
 
     # Filtering only positive ndvi values
@@ -1054,7 +1010,6 @@ def sensible_heat_flux(lst_dem, savi, ux, n_Ts_cold, d_hot_pixel, elev):
 
     References
     ----------
-
     .. [Bastiaanssen1998] Bastiaanssen, W.G.M., Menenti, M., Feddes, R.A.,
         Holtslag, A.A.M., 1998. A remote sensing surface energy balance
         algorithm for land (SEBAL): 1. Formulation. J. Hydrol. 212–213, 198–212.
@@ -1272,11 +1227,9 @@ def daily_et(h_inst, g_inst, rn_inst, lst_dem, rad_24h):
 
     References
     ----------
-
     .. [Bastiaanssen1998] Bastiaanssen, W.G.M., Menenti, M., Feddes, R.A.,
         Holtslag, A.A.M., 1998. A remote sensing surface energy balance
         algorithm for land (SEBAL): 1. Formulation. J. Hydrol. 212–213, 198–212.
-
     """
 
     # Instantaneous Latent Heat flux [W m-2]
@@ -1325,9 +1278,6 @@ def et_fraction(time_start, et, et_reference_source, et_reference_band, et_refer
     Returns
     -------
     ee.Image
-
-    References
-    ----------
     """
 
     date = ee.Date(time_start)
