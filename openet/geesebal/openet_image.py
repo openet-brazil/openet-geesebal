@@ -29,7 +29,7 @@ def lazy_property(fn):
 class Image:
     """Google Earth Engine SEBAL - GEESEBAL for Landsat image"""
 
-    _C2_LST_CORRECT = True  # Enable (True) C2 LST correction to recalculate LST
+    _C2_LST_CORRECT = False  # Enable (True) C2 LST correction to recalculate LST
 
     def __init__(
         self,
@@ -50,7 +50,7 @@ class Image:
         image : ee.Image
             A "prepped" GEESEBAL input image.
             Image must have bands:
-                ndvi, lai, savi, lst, emissivity, ndwi, albedo
+                ndvi, ndwi, savi, lst, emissivity, albedo
             Image must have properties:
                 SUN_ELEVATION, system:id, system:index, system:time_start
         meteorology_source_inst : str, optional
@@ -215,7 +215,11 @@ class Image:
         cloudmask_args : dict
             keyword arguments to pass through to cloud mask function
         kwargs : dict
-            Keyword arguments to pass through to Image init function
+            Keyword arguments to pass through to Image init function.
+            c2_lst_correct : boolean, optional
+                Apply the Landsat Collection 2 LST emissivity correction.
+            lst_source : str, optional
+                If lst_source is set, force c2_lst_correct to be False
 
         Returns
         -------
@@ -229,47 +233,32 @@ class Image:
 
         # Rename bands to generic names
         input_bands = ee.Dictionary({
-            "LANDSAT_4": ["SR_B1", "SR_B2", "SR_B3", "SR_B4",
-                          "SR_B5", "SR_B7", "ST_B6", "QA_PIXEL"],
-            "LANDSAT_5": ["SR_B1", "SR_B2", "SR_B3", "SR_B4",
-                          "SR_B5", "SR_B7", "ST_B6", "QA_PIXEL"],
-            "LANDSAT_7": ["SR_B1", "SR_B2", "SR_B3", "SR_B4",
-                          "SR_B5", "SR_B7", "ST_B6", "QA_PIXEL"],
-            "LANDSAT_8": ["SR_B1", "SR_B2", "SR_B3", "SR_B4",
-                          "SR_B5", "SR_B6", "SR_B7", "ST_B10", "QA_PIXEL"],
-            "LANDSAT_9": ["SR_B1", "SR_B2", "SR_B3", "SR_B4",
-                          "SR_B5", "SR_B6", "SR_B7", "ST_B10", "QA_PIXEL"],
+            "LANDSAT_4": ["SR_B1", "SR_B2", "SR_B3", "SR_B4", "SR_B5", "SR_B7"],
+            "LANDSAT_5": ["SR_B1", "SR_B2", "SR_B3", "SR_B4", "SR_B5", "SR_B7"],
+            "LANDSAT_7": ["SR_B1", "SR_B2", "SR_B3", "SR_B4", "SR_B5", "SR_B7"],
+            "LANDSAT_8": ["SR_B1", "SR_B2", "SR_B3", "SR_B4", "SR_B5", "SR_B6", "SR_B7"],
+            "LANDSAT_9": ["SR_B1", "SR_B2", "SR_B3", "SR_B4", "SR_B5", "SR_B6", "SR_B7"],
         })
         output_bands = ee.Dictionary({
-            "LANDSAT_4": ["blue", "green", "red", "nir",
-                          "swir1", "swir2", "lst", "QA_PIXEL"],
-            "LANDSAT_5": ["blue", "green", "red", "nir",
-                          "swir1", "swir2", "lst", "QA_PIXEL"],
-            "LANDSAT_7": ["blue", "green", "red", "nir",
-                          "swir1", "swir2", "lst", "QA_PIXEL"],
-            "LANDSAT_8": ["ultra_blue", "blue", "green", "red", "nir",
-                          "swir1", "swir2", "lst", "QA_PIXEL"],
-            "LANDSAT_9": ["ultra_blue", "blue", "green", "red", "nir",
-                          "swir1", "swir2", "lst", "QA_PIXEL"],
+            "LANDSAT_4": ["blue", "green", "red", "nir", "swir1", "swir2"],
+            "LANDSAT_5": ["blue", "green", "red", "nir", "swir1", "swir2"],
+            "LANDSAT_7": ["blue", "green", "red", "nir", "swir1", "swir2"],
+            "LANDSAT_8": ["ultra_blue", "blue", "green", "red", "nir", "swir1", "swir2"],
+            "LANDSAT_9": ["ultra_blue", "blue", "green", "red", "nir", "swir1", "swir2"],
         })
         scalars = ee.Dictionary({
-            "LANDSAT_4": [0.0000275, 0.0000275, 0.0000275, 0.0000275,
-                          0.0000275, 0.0000275, 0.00341802, 1],
-            "LANDSAT_5": [0.0000275, 0.0000275, 0.0000275, 0.0000275,
-                          0.0000275, 0.0000275, 0.00341802, 1],
-            "LANDSAT_7": [0.0000275, 0.0000275, 0.0000275, 0.0000275,
-                          0.0000275, 0.0000275, 0.00341802, 1],
-            "LANDSAT_8": [0.0000275, 0.0000275, 0.0000275, 0.0000275, 0.0000275,
-                          0.0000275, 0.0000275, 0.00341802, 1],
-            "LANDSAT_9": [0.0000275, 0.0000275, 0.0000275, 0.0000275, 0.0000275,
-                          0.0000275, 0.0000275, 0.00341802, 1],
+            "LANDSAT_4": [0.0000275] * 6,
+            "LANDSAT_5": [0.0000275] * 6,
+            "LANDSAT_7": [0.0000275] * 6,
+            "LANDSAT_8": [0.0000275] * 7,
+            "LANDSAT_9": [0.0000275] * 7,
         })
         offsets = ee.Dictionary({
-            "LANDSAT_4": [-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, 149.0, 0],
-            "LANDSAT_5": [-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, 149.0, 0],
-            "LANDSAT_7": [-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, 149.0, 0],
-            "LANDSAT_8": [-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, -0.2, 149.0, 0],
-            "LANDSAT_9": [-0.2, -0.2, -0.2, -0.2, -0.2, -0.2, -0.2, 149.0, 0],
+            "LANDSAT_4": [-0.2] * 6,
+            "LANDSAT_5": [-0.2] * 6,
+            "LANDSAT_7": [-0.2] * 6,
+            "LANDSAT_8": [-0.2] * 7,
+            "LANDSAT_9": [-0.2] * 7,
         })
 
         prep_image = (
@@ -280,27 +269,61 @@ class Image:
 
         # CGM - Need to come up with a more robust approach,
         #   but this seems to work for now
+
         albedo = ee.Algorithms.If(
             ee.List(["LANDSAT_8", "LANDSAT_9"]).contains(spacecraft_id),
             landsat.albedo_l89(prep_image),
             landsat.albedo_l457(prep_image),
         )
+        # qa_image = sr_image.select(['QA_PIXEL'])
         cloud_mask = ee.Algorithms.If(
             ee.List(["LANDSAT_8", "LANDSAT_9"]).contains(spacecraft_id),
             landsat.cloud_mask_C2_l89(sr_image),
             landsat.cloud_mask_C2_l457(sr_image),
         )
 
+        # Parse the "lst_source" and "c2_lst_correct" keyword arguments
+        # Force the LST correction flag to False if the LST source parameter is set
+        if ('lst_source' in kwargs.keys()) and kwargs['lst_source']:
+            c2_lst_correct = False
+        elif 'c2_lst_correct' in kwargs.keys():
+            assert isinstance(kwargs['c2_lst_correct'], bool), "selection type must be a boolean"
+            # Remove from kwargs since it is not a valid argument for Image init
+            c2_lst_correct = kwargs.pop('c2_lst_correct')
+        else:
+            c2_lst_correct = cls._C2_LST_CORRECT
+
+        # Build the input LST image
+        if c2_lst_correct:
+            lst_image = openet.core.common.landsat_c2_sr_lst_correct(sr_image)
+        elif ('lst_source' in kwargs.keys()) and kwargs['lst_source']:
+            # Use an LST image from a separate LST source collection
+            # Leaving param in kwargs for now so it will be written as an output property
+            # Can't use the LST band as the mask since it may have emissivity holes
+            lst_image = landsat.lst_source_image(
+                lst_source=kwargs['lst_source'], mask_image=sr_image.select(['SR_B3'])
+            )
+        else:
+            lst_bands = ee.Dictionary({
+                'LANDSAT_4': ['ST_B6'],
+                'LANDSAT_5': ['ST_B6'],
+                'LANDSAT_7': ['ST_B6'],
+                'LANDSAT_8': ['ST_B10'],
+                'LANDSAT_9': ['ST_B10'],
+            })
+            lst_image = (
+                sr_image.select(lst_bands.get(spacecraft_id), ['lst'])
+                .multiply(0.00341802).add(149.0)
+            )
+
         # Build the input image
-        # Don't compute LST since it is being provided
         input_image = ee.Image([
-            prep_image.select(["lst"]),
-            landsat.ndvi(prep_image),
-            landsat.lai(prep_image),
-            landsat.savi(prep_image),
-            landsat.emissivity(prep_image),
-            landsat.ndwi(prep_image),
             albedo,
+            landsat.emissivity(prep_image),
+            lst_image,
+            landsat.ndvi(prep_image),
+            landsat.ndwi(prep_image),
+            landsat.savi(prep_image),
         ])
 
         # Apply the cloud mask and add properties
@@ -347,9 +370,9 @@ class Image:
         return ee.Image(output_images).set(self._properties)
 
     @lazy_property
-    def ndvi(self):
+    def albedo(self):
 
-        return self.image.select(["ndvi"]).set(self._properties)
+        return self.image.select(["albedo"]).set(self._properties)
 
     @lazy_property
     def emissivity(self):
@@ -357,29 +380,24 @@ class Image:
         return self.image.select(["emissivity"]).set(self._properties)
 
     @lazy_property
+    def lst(self):
+
+        return self.image.select(["lst"]).set(self._properties)
+
+    @lazy_property
+    def ndvi(self):
+
+        return self.image.select(["ndvi"]).set(self._properties)
+
+    @lazy_property
     def ndwi(self):
 
         return self.image.select(["ndwi"]).set(self._properties)
 
     @lazy_property
-    def lai(self):
-
-        return self.image.select(["lai"]).set(self._properties)
-
-    @lazy_property
-    def albedo(self):
-
-        return self.image.select(["albedo"]).set(self._properties)
-
-    @lazy_property
     def savi(self):
 
         return self.image.select(["savi"]).set(self._properties)
-
-    @lazy_property
-    def lst(self):
-
-        return self.image.select(["lst"]).set(self._properties)
 
     @lazy_property
     def elevation(self):
