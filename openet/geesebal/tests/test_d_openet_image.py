@@ -1,4 +1,4 @@
-import datetime
+from datetime import datetime, timezone
 import logging
 import pprint
 
@@ -16,10 +16,10 @@ COLL_ID = 'LANDSAT/LC08/C02/T1_L2'
 SCENE_ID = 'LC08_044033_20170716'
 IMAGE_ID = f'{COLL_ID}/{SCENE_ID}'
 SCENE_TIME = 1500230731090
-SCENE_DT = datetime.datetime.utcfromtimestamp(SCENE_TIME / 1000.0)
+SCENE_DT = datetime.fromtimestamp(SCENE_TIME / 1000.0, tz=timezone.utc)
 SCENE_DATE = SCENE_DT.strftime('%Y-%m-%d')
 SCENE_DOY = int(SCENE_DT.strftime('%j'))
-SCENE_0UTC_DT = datetime.datetime.strptime(SCENE_DATE, '%Y-%m-%d')
+SCENE_0UTC_DT = datetime.strptime(SCENE_DATE, '%Y-%m-%d')
 SUN_ELEVATION = 64.3
 TEST_POINT = (-121.5265, 38.7399)
 # TEST_POINT = (-120.113, 36.336)
@@ -53,15 +53,15 @@ TEST_POINT = (-121.5265, 38.7399)
 #         })
 
 
-def default_image(albedo=0.2, emissivity=0.964, lai=1.4, lst=300, ndvi=0.5, ndwi=-0.1, savi=0.5):
+def default_image(albedo=0.2, emissivity=0.964, lst=300, ndvi=0.5, ndwi=-0.1, savi=0.5):
     # First construct a fake 'prepped' input image
     # Map the values to an actual Landsat image
     return (
         ee.Image(IMAGE_ID)
-        .select([0, 1, 2, 3, 4, 5, 6])
+        .select([0, 1, 2, 3, 4, 5])
         .multiply(0).double()
-        .add(ee.Image.constant([albedo, emissivity, lai, lst, ndvi, ndwi, savi]))
-        .rename(['albedo', 'emissivity', 'lai', 'lst', 'ndvi', 'ndwi', 'savi'])
+        .add(ee.Image.constant([albedo, emissivity, lst, ndvi, ndwi, savi]))
+        .rename(['albedo', 'emissivity', 'lst', 'ndvi', 'ndwi', 'savi'])
         .set({
             'system:index': SCENE_ID,
             'system:time_start': SCENE_TIME,
@@ -76,7 +76,6 @@ def default_image(albedo=0.2, emissivity=0.964, lai=1.4, lst=300, ndvi=0.5, ndwi
 def default_image_args(
         albedo=0.2,
         emissivity=0.964,
-        lai=1.4,
         lst=300,
         ndvi=0.5,
         ndwi=-0.1,
@@ -95,8 +94,7 @@ def default_image_args(
         ):
     return {
         'image': default_image(
-            albedo=albedo, emissivity=emissivity, lai=lai,
-            lst=lst, ndvi=ndvi, ndwi=ndwi, savi=savi
+            albedo=albedo, emissivity=emissivity, lst=lst, ndvi=ndvi, ndwi=ndwi, savi=savi
         ),
         # 'meteorology_source_inst': meteorology_source_inst,
         # 'meteorology_source_daily': meteorology_source_daily,
@@ -115,7 +113,6 @@ def default_image_args(
 def default_image_obj(
         albedo=0.2,
         emissivity=0.964,
-        lai=1.4,
         lst=300,
         ndvi=0.5,
         ndwi=-0.1,
@@ -135,7 +132,6 @@ def default_image_obj(
     return model.Image(**default_image_args(
         albedo=albedo,
         emissivity=emissivity,
-        lai=lai,
         lst=lst,
         ndvi=ndvi,
         ndwi=ndwi,
@@ -387,7 +383,48 @@ def test_Image_from_landsat_c2_sr_landsat_image(image_id):
 # def test_Image_from_landsat_c2_sr_exception():
 #     """Test instantiating the class for an invalid image ID"""
 #     with pytest.raises(Exception):
-#         model.Image.from_landsat_c2_sr(ee.Image('DEADBEEF'))._index.getInfo()
+#         model.Image.from_landsat_c2_sr(ee.Image('FOO'))._index.getInfo()
+
+
+def test_Image_from_landsat_c2_sr_c2_lst_correct_arg():
+    """Test if the c2_lst_correct parameter can be set (not if it works)"""
+    image_id = 'LANDSAT/LC08/C02/T1_L2/LC08_031034_20160702'
+    output = model.Image.from_landsat_c2_sr(image_id, c2_lst_correct=True)
+    assert type(output) == type(default_image_obj())
+
+
+def test_Image_from_landsat_c2_sr_c2_lst_correct_fill():
+    """Test if the c2_lst_correct fills the LST holes in Nebraska"""
+    image_id = 'LANDSAT/LC08/C02/T1_L2/LC08_031034_20160702'
+    xy = (-102.08284, 37.81728)
+    # CGM - Is the uncorrected test needed?
+    uncorrected = utils.point_image_value(
+        model.Image.from_landsat_c2_sr(image_id, c2_lst_correct=False).lst, xy)
+    assert uncorrected['lst'] is None
+    corrected = utils.point_image_value(
+        model.Image.from_landsat_c2_sr(image_id, c2_lst_correct=True).lst, xy)
+    assert corrected['lst'] > 0
+    # # Exact test values copied from openet-core
+    # assert abs(corrected['lst'] - 306.83) <= 0.25
+
+
+def test_Image_from_landsat_c2_sr_lst_source_arg():
+    """Test if the lst_source parameter can be set (not if it works)"""
+    image_id = 'LANDSAT/LC08/C02/T1_L2/LC08_031035_20160702'
+    output = model.Image.from_landsat_c2_sr(
+        image_id, lst_source='projects/openet/assets/lst/landsat/c02')
+    assert type(output) == type(default_image_obj())
+
+
+def test_Image_from_landsat_c2_sr_lst_source_values():
+    """Test if the lst_source image can be read"""
+    image_id = 'LANDSAT/LC08/C02/T1_L2/LC08_031035_20160702'
+    xy = (-102.4, 36.1)
+    lst_source = 'projects/openet/assets/lst/landsat/c02'
+    output_img = model.Image.from_landsat_c2_sr(image_id, lst_source=lst_source).lst
+    output = utils.point_image_value(output_img, xy)
+    assert abs(output['lst'] - 322.8) <= 0.1
+    # assert output_img.get('lst_source_id').getInfo().startswith(lst_source)
 
 
 @pytest.mark.parametrize(
