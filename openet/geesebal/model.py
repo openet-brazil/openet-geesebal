@@ -137,36 +137,37 @@ def et(
 
         # Land surface temperature correction [K]
         lst_dem = lst_correction(
-            time_start, lst, elev, tair_dem, rh, sun_elevation,
-            hour, minutes, coords)
+            time_start, lst, elev, tair_dem, rh, sun_elevation, hour, minutes, coords
+        )
         
         # Instantaneous net radiation using reanalysis dataset [W m-2]
         rad_inst = radiation_inst(
-            elev, lst, emissivity, albedo, tair, rh,
-            rso_inst, sun_elevation, cos_zn)
+            elev, lst, emissivity, albedo, tair, rh, rso_inst, sun_elevation, cos_zn
+        )
         
         # Instantaneous soil heat flux [W m-2]
-        g_inst = soil_heat_flux(rad_inst, ndvi, albedo, lst, ndwi, year, flag_g)
+        g_inst = soil_heat_flux(rad_inst, ndvi, albedo, lst, ndwi, flag_g, year)
         
         # Daily ney radiation [W m-2]
         rad_24h = radiation_24h(time_start, tmax, tmin, elev, rso_24h)
 
         # Cold pixels
         cold_pixels = cold_pixel(
-            ndvi, ndwi, lst_dem, top_ndvi, coldest_lst,
-            geometry_image, coords, elev, proj)
+            ndvi, ndwi, lst_dem, top_ndvi, coldest_lst, geometry_image, coords, elev, proj
+        )
 
-        n_Ts_cold = ee.Number(cold_pixels.get('temp'));  
+        n_Ts_cold = ee.Number(cold_pixels.get('temp'))
         
         # Hot pixels
         hot_pixels = hot_pixel(
             ndvi, ndwi, lst_dem, rad_inst, g_inst, ndvi_hot, lst_hot,
-            geometry_image, coords, tfac, elev, proj)
+            geometry_image, coords, tfac, elev, proj
+        )
         
         # Instantaneous sensible heat flux [W m-2]
         h_inst = sensible_heat_flux(
-            image.addBands(lst_dem.rename('lst_dem')),
-            ux, n_Ts_cold, hot_pixels, elev)
+            image.addBands(lst_dem.rename('lst_dem')), ux, n_Ts_cold, hot_pixels, elev
+        )
         
         # Daily evapotranspiration [mm day-1]
         et_24hr = daily_et(h_inst, g_inst, rad_inst, lst_dem, rad_24h)
@@ -379,8 +380,7 @@ def lst_correction(time_start, lst, elev, tair, rh, sun_elevation, hour, minutes
     cos_theta = solar_zenith_radians.cos()
 
     # Air density [Kg m-3]
-    air_dens = lst.expression('(1000 * Pair) / (1.01 * LST * 287)', 
-                              {'Pair': pres, 'LST': lst})
+    air_dens = lst.expression('(1000 * Pair) / (1.01 * LST * 287)', {'Pair': pres, 'LST': lst})
 
     # Temperature lapse rate [K m-1]
     temp_lapse_rate = ee.Number(0.0065)
@@ -469,7 +469,10 @@ def slope_mask(elev, proj):
     ----------
     """
 
-    dem_slope = ee.Terrain.slope(elev).divide(180).multiply(3.141592653589793).tan().multiply(100).reproject(proj)
+    dem_slope = (
+        ee.Terrain.slope(elev).divide(180).multiply(math.pi).tan().multiply(100)
+        .reproject(proj)
+    )
     slp_mask = dem_slope.lte(30).selfMask()    
 
     return ee.Image(slp_mask)
@@ -534,18 +537,19 @@ def radiation_inst(dem, lst, emissivity, albedo, tair, rh, swdown_inst, sun_elev
     # Net radiation [W m-2]
     rn_inst = lst.expression(
         '((1 - alfa) * Rs_down) + Rl_down - Rl_up - ((1 - e_0) * Rl_down)',
-        {'alfa': albedo,
-         'Rs_down': swdown_inst_dem,
-         'Rl_down': rad_long_down,
-         'Rl_up': rad_long_up,
-         'e_0': emissivity,
+        {
+            'alfa': albedo,
+            'Rs_down': swdown_inst_dem,
+            'Rl_down': rad_long_down,
+            'Rl_up': rad_long_up,
+            'e_0': emissivity,
         },
     )
 
     return rn_inst.rename('rn_inst')
 
 
-def soil_heat_flux(rn, ndvi, albedo, lst, ndwi, year, flag_g):
+def soil_heat_flux(rn, ndvi, albedo, lst, ndwi, flag_g, year):
     """
     Instantaneous Soil Heat Flux [W m-2]
 
@@ -590,10 +594,12 @@ def soil_heat_flux(rn, ndvi, albedo, lst, ndwi, year, flag_g):
     elif flag_g == 'g_brazil':
         # Soil heat flux [W m-2] for all classes except croplands (Ruhoff, 2019)
         g_noncrop = rn.expression(
-            'rn * lst * (0.015*albedo) * (1 - 0.8*(ndvi ** (1/3)))',
+            'rn * lst * (0.015 * albedo) * (1 - 0.8 * (ndvi ** (1/3)))',
             {'rn': rn, 'ndvi': ndvi, 'albedo': albedo, 'lst': lst},
         )
 
+        # TODO: Move landuse processing out of model and into Image,
+        #   Pass in crop or noncrop mask similar to PTJPL, SSEBop, RADET
         # MapBiomas classification for the image year
         year_min = 1985
         year_max = 2025
@@ -655,12 +661,12 @@ def radiation_24h(time_start, tmax, tmin, elev, rso_24h):
     doy = ee.Date(time_start).getRelative('day', 'year').add(1)
 
     # Inverse relative distance earth-sun (FAO56 Eqn 23)
-    dr = tmax.expression(
-        '1 + (0.033 * cos((2 * pi / 365) * doy))', {'doy': doy, 'pi': math.pi})
+    dr = tmax.expression('1 + (0.033 * cos((2 * pi / 365) * doy))', {'doy': doy, 'pi': math.pi})
 
     # Solar declination [rad] (FAO56 Eqn 24)
     sd = tmax.expression(
-        '0.40928 * sin(((2 * pi / 365) * doy) - 1.39)', {'doy': doy, 'pi': math.pi})
+        '0.40928 * sin(((2 * pi / 365) * doy) - 1.39)', {'doy': doy, 'pi': math.pi}
+    )
 
     # Latitude of the image
     lat = tmax.pixelLonLat().select(['latitude']).multiply(DEG2RAD).rename('latitude')
@@ -670,10 +676,14 @@ def radiation_24h(time_start, tmax, tmin, elev, rso_24h):
 
     # Extraterrestrial radiation [MJ m-2 d-1] (FAO56 Eqn 21)
     rad_a = tmax.expression(
-        'Ws * sin(Lat) * sin(Sd) + cos(Lat) * cos(Sd) * sin(Ws)', {'Ws': ws, 'Lat': lat, 'Sd': sd})
+        'Ws * sin(Lat) * sin(Sd) + cos(Lat) * cos(Sd) * sin(Ws)',
+        {'Ws': ws, 'Lat': lat, 'Sd': sd}
+    )
 
     ra = tmax.expression(
-        '((24 * 60) / pi) * Gsc * Dr * rad_a', {'pi': math.pi, 'Gsc': gsc, 'Dr': dr, 'rad_a': rad_a})
+        '((24 * 60) / pi) * Gsc * Dr * rad_a',
+        {'pi': math.pi, 'Gsc': gsc, 'Dr': dr, 'rad_a': rad_a}
+    )
     
     # Simplified clear sky solar formulation [MJ m-2 d-1] (FAO56 Eqn 37)
     rso = tmax.expression('(0.75 + 2E-5 * z) * Ra', {'z': elev, 'Ra': ra})
@@ -682,12 +692,12 @@ def radiation_24h(time_start, tmax, tmin, elev, rso_24h):
     rns = tmax.expression('(1 - albedo) * Rs', {'Rs': rs, 'albedo': 0.23})
 
     # Actual vapor pressure [MJ m-2 d-1] (FAO56 Eqn 11)
-    ea = tmax.expression(
-        '0.6108 * (exp((17.27 * T_air) / (T_air + 237.3)))', {'T_air': tmin})
+    ea = tmax.expression('0.6108 * (exp((17.27 * T_air) / (T_air + 237.3)))', {'T_air': tmin})
 
     # Net longwave radiation [MJ m-2 d-1] (FAO56 Eqn 39)
     rnl = tmax.expression(
-        '4.901E-9 * ((Tmax ** 4 + Tmin ** 4) / 2) * (0.34 - 0.14 * sqrt(ea)) * (1.35 * (Rs / Rso) - 0.35)',
+        '4.901E-9 * ((Tmax ** 4 + Tmin ** 4) / 2) * (0.34 - 0.14 * sqrt(ea)) * '
+        '(1.35 * (Rs / Rso) - 0.35)',
         {'Tmax': tmax.add(273.15), 'Tmin': tmin.add(273.15), 'ea': ea, 'Rs': rs, 'Rso': rso},
     )
 
@@ -757,7 +767,7 @@ def cold_pixel(ndvi, ndwi, lst_dem, ndvi_cold, lst_cold, geometry_image, coords,
     # Lst for non water pixels 
     lst_nw = lst_dem.updateMask(ndwi.lte(0)).rename('lst_nw')
 
-    # Homogenetou mask for ndvi
+    # Homogeneous mask for ndvi
     stdev_ndvi = homogeneous_mask(ndvi, proj)
 
     # Flat areas mask 
@@ -767,15 +777,20 @@ def cold_pixel(ndvi, ndwi, lst_dem, ndvi_cold, lst_cold, geometry_image, coords,
     images = pos_ndvi.addBands([ndvi, ndvi_neg, pos_ndvi, lst_neg, lst_nw, coords])
 
     # Estimating ndvi percentile [coldest]
-    d_perc_top_NDVI = (images.select('ndvi_neg')
+    # TODO: Why does this call get ndvi.geometry() while the others use geometry_image?
+    #   Could we avoid passing in the geometry_image parameter?
+    d_perc_top_NDVI = (
+        images.select('ndvi_neg')
         .updateMask(stdev_ndvi)
         .updateMask(slope_filt)
         .reduceRegion(
-        reducer=ee.Reducer.percentile([ndvi_cold]),
-        geometry=ndvi.geometry(),
-        scale=30,
-        maxPixels=1e9
-    ).combine(ee.Dictionary({'ndvi_neg': 100}), False))
+            reducer=ee.Reducer.percentile([ndvi_cold]),
+            geometry=ndvi.geometry(),
+            scale=30,
+            maxPixels=1e9,
+        )
+        .combine(ee.Dictionary({'ndvi_neg': 100}), False)
+    )
    
     # Get top ndvi value
     n_perc_top_NDVI = ee.Number(d_perc_top_NDVI.get('ndvi_neg'))
@@ -784,15 +799,18 @@ def cold_pixel(ndvi, ndwi, lst_dem, ndvi_cold, lst_cold, geometry_image, coords,
     i_top_NDVI = images.updateMask(images.select('ndvi_neg').lte(n_perc_top_NDVI))
 
     # Filtering lst
-    d_perc_low_LST = (i_top_NDVI.select('lst_nw')
+    d_perc_low_LST = (
+        i_top_NDVI.select('lst_nw')
         .updateMask(stdev_ndvi)
         .updateMask(slope_filt)
         .reduceRegion(
-        reducer=ee.Reducer.percentile([lst_cold]),
-        geometry=geometry_image,
-        scale=30,
-        maxPixels=1e9
-    ).combine(ee.Dictionary({'lst_nw': 350}), False))
+            reducer=ee.Reducer.percentile([lst_cold]),
+            geometry=geometry_image,
+            scale=30,
+            maxPixels=1e9,
+        )
+        .combine(ee.Dictionary({'lst_nw': 350}), False)
+    )
           
     # Get low lst value
     n_perc_low_LST = ee.Number(d_perc_low_LST.get('lst_nw'))
@@ -810,7 +828,7 @@ def cold_pixel(ndvi, ndwi, lst_dem, ndvi_cold, lst_cold, geometry_image, coords,
         reducer=ee.Reducer.sum(),
         geometry=geometry_image,
         scale=30,
-        maxPixels=1e9
+        maxPixels=1e9,
     )
         
     n_sum_final_cold_pix = ee.Number(sum_final_cold_pix.get('int'))
@@ -907,7 +925,7 @@ def hot_pixel(ndvi, ndwi, lst_dem, rn, g, ndvi_hot, lst_hot, geometry_image, coo
     # Lst for non water pixels 
     lst_nw = lst_dem.updateMask(ndwi.lte(0)).rename('lst_nw')
  
-    # Homogenetou mask for ndvi
+    # Homogeneous mask for ndvi
     stdev_ndvi = homogeneous_mask(ndvi, proj)
 
     # Flat areas mask
@@ -921,10 +939,12 @@ def hot_pixel(ndvi, ndwi, lst_dem, rn, g, ndvi_hot, lst_hot, geometry_image, coo
         images.select('post_ndvi')
         .updateMask(slope_filt)
         .updateMask(stdev_ndvi)
-        .reduceRegion(reducer=ee.Reducer.percentile([ndvi_hot]), 
-                      geometry=geometry_image, 
-                      scale=30, 
-                      maxPixels=1e9)
+        .reduceRegion(
+            reducer=ee.Reducer.percentile([ndvi_hot]),
+            geometry=geometry_image,
+            scale=30,
+            maxPixels=1e9,
+        )
         .combine(ee.Dictionary({'post_ndvi': 100}), overwrite=False)
     )
 
@@ -935,13 +955,16 @@ def hot_pixel(ndvi, ndwi, lst_dem, rn, g, ndvi_hot, lst_hot, geometry_image, coo
     i_low_NDVI = images.updateMask(images.select('post_ndvi').lte(n_perc_low_NDVI))
 
     # Estimating lst percentile [hottest]
-    d_perc_top_lst = (i_low_NDVI.select('lst_neg')
-        .reduceRegion(reducer=ee.Reducer.percentile([lst_hot]),
-                      geometry=geometry_image,
-                      scale=30,
-                      maxPixels=1e9
-                      ).combine(ee.Dictionary({'lst_neg': 350}), overwrite=False)
-                      )
+    d_perc_top_lst = (
+        i_low_NDVI.select('lst_neg')
+        .reduceRegion(
+            reducer=ee.Reducer.percentile([lst_hot]),
+            geometry=geometry_image,
+            scale=30,
+            maxPixels=1e9,
+        )
+        .combine(ee.Dictionary({'lst_neg': 350}), overwrite=False)
+    )
     
     # Get low lst value
     n_perc_top_lst = ee.Number(d_perc_top_lst.get('lst_neg'))
@@ -957,7 +980,7 @@ def hot_pixel(ndvi, ndwi, lst_dem, rn, g, ndvi_hot, lst_hot, geometry_image, coo
         reducer=ee.Reducer.sum(),
         geometry=geometry_image,
         scale=30,
-        maxPixels=1e9
+        maxPixels=1e9,
     )
 
     n_sum_final_hot_pix = ee.Number(sum_final_hot_pix.get('int'))
@@ -1002,7 +1025,7 @@ def hot_pixel(ndvi, ndwi, lst_dem, rn, g, ndvi_hot, lst_hot, geometry_image, coo
     return d_hot_pixel.combine(
         ee.Dictionary({
         'temp': 0, 'tfac': 0, 'x': 0, 'y': 0, 'Rn': 0, 'G': 0, 
-        'ndvi': 0, 'sum': 0,'list_x':[0],'list_y':[0]}), False
+        'ndvi': 0, 'sum': 0, 'list_x':[0], 'list_y':[0]}), False
         )
 
 
@@ -1088,12 +1111,16 @@ def sensible_heat_flux(image, ux, n_Ts_cold, d_hot_pixel, elev):
     pts_collection = ee.FeatureCollection(indices.map(create_points))
 
     # Friction velocity at the weather station (Allen2002 Eqn 37)
-    i_ufric_ws = i_savi.expression('(n_K * ux) / log(n_zx / n_zom)', {
-        'n_K': n_K, 'n_zx': n_zx, 'n_zom': n_zom, 'ux': ux})
+    i_ufric_ws = i_savi.expression(
+        '(n_K * ux) / log(n_zx / n_zom)',
+        {'n_K': n_K, 'n_zx': n_zx, 'n_zom': n_zom, 'ux': ux}
+    )
     
     # Wind speed at blending height at the weather station  (Allen2002 Eqn 29)
-    i_u200 = i_savi.expression('i_ufric_ws * log(n_height / n_zom) / n_K', {
-            'i_ufric_ws': i_ufric_ws, 'n_height': n_height, 'n_zom': n_zom, 'n_K': n_K})
+    i_u200 = i_savi.expression(
+        'i_ufric_ws * log(n_height / n_zom) / n_K',
+        {'i_ufric_ws': i_ufric_ws, 'n_height': n_height, 'n_zom': n_zom, 'n_K': n_K}
+    )
     
     # Momentum roughness length for each pixel
     i_zom = i_savi.expression('exp((5.62 * SAVI) - 5.809)', {'SAVI': i_savi})
@@ -1102,13 +1129,16 @@ def sensible_heat_flux(image, ux, n_Ts_cold, d_hot_pixel, elev):
     slope_aspect = ee.Terrain.products(elev)
     
     # Momentum roughness slope/aspect Correction  (Allen2002  A12 Eqn9)
-    i_zom = i_zom.expression('zom * (1 + (slope - 5) / 20)', {
-        'zom': i_zom, 'slope': slope_aspect.select('slope')})
+    i_zom = i_zom.expression(
+        'zom * (1 + (slope - 5) / 20)',
+        {'zom': i_zom, 'slope': slope_aspect.select('slope')}
+    )
     
     # Friction velocity for each pixel (Allen2002 Eqn 30)
-    i_ufric = i_zom.expression('(n_K * u200) / log(height / i_zom)', {
-        'u200': i_u200, 'height': n_height, 'i_zom': n_zom, 'n_K': n_K}
-        ).rename('u_fr')
+    i_ufric = i_zom.expression(
+        '(n_K * u200) / log(height / i_zom)',
+        {'u200': i_u200, 'height': n_height, 'i_zom': n_zom, 'n_K': n_K}
+    ).rename('u_fr')
     
     # Heights [m] above the zero plane displacement
     z1 = ee.Number(0.01)
@@ -1130,7 +1160,7 @@ def sensible_heat_flux(image, ux, n_Ts_cold, d_hot_pixel, elev):
         sampled_points = i_rah.select('rah').reduceRegions(
             collection=pts_collection,
             reducer=ee.Reducer.mean(), # Gets the pixel value at each point
-            scale=30
+            scale=30,
         )
 
         n_rah_hot = ee.Number(sampled_points.aggregate_mean('mean'))
@@ -1142,23 +1172,18 @@ def sensible_heat_flux(image, ux, n_Ts_cold, d_hot_pixel, elev):
         n_coef_b = n_dT_hot.subtract(n_coef_a.multiply(n_Ts_hot))
        
         i_lst_med = image.select('lst_dem')
-        i_dT_int = ee.Image(0).expression( 
-            '(n_coef_a * i_lst_med) + n_coef_b', {
-                'n_coef_a': n_coef_a,
-                'n_coef_b': n_coef_b,
-                'i_lst_med': i_lst_med 
-            }).rename('dT') 
+        i_dT_int = ee.Image(0).expression(
+            '(n_coef_a * i_lst_med) + n_coef_b',
+            {'n_coef_a': n_coef_a, 'n_coef_b': n_coef_b, 'i_lst_med': i_lst_med}
+        ).rename('dT')
     
         i_Ta = i_lst_med.subtract(i_dT_int)
         i_ro = i_Ta.expression('(-0.0046 * i_Ta) + 2.5538', {'i_Ta': i_Ta}).rename('ro')
      
         i_H_step = i_dT_int.expression( 
-            '(i_ro*n_Cp*i_dT_int)/i_rah', {
-                'i_ro': i_ro,
-                'n_Cp': n_Cp,
-                'i_dT_int': i_dT_int,
-                'i_rah': i_rah 
-            }).rename('H')
+            '(i_ro * n_Cp * i_dT_int) / i_rah',
+            {'i_ro': i_ro, 'n_Cp': n_Cp, 'i_dT_int': i_dT_int,'i_rah': i_rah}
+        ).rename('H')
           
         if n == 1:
             i_H_int = i_H_step
@@ -1166,7 +1191,8 @@ def sensible_heat_flux(image, ux, n_Ts_cold, d_hot_pixel, elev):
             i_H_int = i_H_step.add(i_H_int).divide(2)
           
         i_L_int = i_dT_int.expression( 
-            '-(i_ro*n_Cp*(i_ufric**3)*i_lst_med)/(0.41*9.81*i_H_int)',{
+            '-(i_ro * n_Cp * (i_ufric ** 3) * i_lst_med) / (0.41 * 9.81 * i_H_int)',
+            {
                 'i_ro': i_ro,
                 'n_Cp': n_Cp,
                 'i_ufric': i_ufric_loop,
@@ -1177,27 +1203,28 @@ def sensible_heat_flux(image, ux, n_Ts_cold, d_hot_pixel, elev):
         img_zero = ee.Image(0)
         
         # Stability Corrections
-        i_psim_200 = img_zero.expression('-5*(2/i_L_int)', {'i_L_int': i_L_int})
-        i_psih_2 = img_zero.expression('-5*(2/i_L_int)', {'i_L_int': i_L_int})
-        i_psih_01 = img_zero.expression('-5*(0.1/i_L_int)', {'i_L_int': i_L_int})
+        i_psim_200 = img_zero.expression('-5 * (2 / i_L_int)', {'i_L_int': i_L_int})
+        i_psih_2 = img_zero.expression('-5 * (2 / i_L_int)', {'i_L_int': i_L_int})
+        i_psih_01 = img_zero.expression('-5 * (0.1 / i_L_int)', {'i_L_int': i_L_int})
       
-        i_x200 = i_L_int.expression('(1-(16*(200/i_L_int)))**0.25', {'i_L_int': i_L_int})
-        i_x2 = i_L_int.expression('(1-(16*(2/i_L_int)))**0.25', {'i_L_int': i_L_int})
-        i_x01 = i_L_int.expression('(1-(16*(0.1/i_L_int)))**0.25', {'i_L_int': i_L_int})
+        i_x200 = i_L_int.expression('(1 - (16 * (200 / i_L_int))) ** 0.25', {'i_L_int': i_L_int})
+        i_x2 = i_L_int.expression('(1 - (16 * (2 / i_L_int))) ** 0.25', {'i_L_int': i_L_int})
+        i_x01 = i_L_int.expression('(1 - (16 * (0.1 / i_L_int))) ** 0.25', {'i_L_int': i_L_int})
       
         pi_val = 3.14159265
         i_psimu_200 = i_x200.expression(
-            '2*log((1+x)/2)+log((1+x**2)/2)-2*atan(x)+0.5*pi', {'x': i_x200, 'pi': pi_val}
+            '2 * log((1 + x) / 2) + log((1 + x ** 2) / 2) - 2 * atan(x) + 0.5 * pi',
+            {'x': i_x200, 'pi': pi_val}
         )
-        i_psihu_2 = i_x2.expression('2*log((1+x**2)/2)', {'x': i_x2})
-        i_psihu_01 = i_x01.expression('2*log((1+x**2)/2)', {'x': i_x01})
+        i_psihu_2 = i_x2.expression('2 * log((1 + x ** 2) / 2)', {'x': i_x2})
+        i_psihu_01 = i_x01.expression('2 * log((1 + x ** 2) / 2)', {'x': i_x01})
       
         i_psim_200 = i_psim_200.where(i_L_int.lt(0), i_psimu_200).where(i_L_int.eq(0), 0)
         i_psih_2 = i_psih_2.where(i_L_int.lt(0), i_psihu_2).where(i_L_int.eq(0), 0)
         i_psih_01 = i_psih_01.where(i_L_int.lt(0), i_psihu_01).where(i_L_int.eq(0), 0)
     
         i_ufric_step = i_ufric_loop.expression( 
-            '(u200*0.41)/(log(hight/i_zom)-i_psim_200)',
+            '(u200 * 0.41) / (log(hight / i_zom) - i_psim_200)',
             {'u200': i_u200, 'hight': n_height, 'i_zom': i_zom, 'i_psim_200': i_psim_200}
         )
         
@@ -1207,7 +1234,7 @@ def sensible_heat_flux(image, ux, n_Ts_cold, d_hot_pixel, elev):
             i_ufric_loop = i_ufric_step.add(i_ufric_loop).divide(2)
          
         i_rah = i_rah.expression( 
-            '(log(z2/z1)-psi_h2+psi_h01)/(i_ufric*0.41)', 
+            '(log(z2 / z1) - psi_h2 + psi_h01) / (i_ufric * 0.41)',
             {'z2': z2, 'z1': z1, 'i_ufric': i_ufric_loop, 'psi_h2': i_psih_2, 'psi_h01': i_psih_01}
         ).rename('rah')
 
@@ -1216,12 +1243,9 @@ def sensible_heat_flux(image, ux, n_Ts_cold, d_hot_pixel, elev):
     i_dT_final = i_dT_int.rename('dT')
     
     i_H_final = i_H_int.expression(
-        '(i_ro*n_Cp*i_dT_int)/i_rah', {
-            'i_ro': i_ro,
-            'n_Cp': n_Cp,
-            'i_dT_int': i_dT_final,
-            'i_rah': i_rah_final 
-        }).clamp(-200, 600).rename('H')
+        '(i_ro * n_Cp * i_dT_int) / i_rah',
+        {'i_ro': i_ro, 'n_Cp': n_Cp, 'i_dT_int': i_dT_final, 'i_rah': i_rah_final}
+    ).clamp(-200, 600).rename('H')
       
     return i_H_final
 
@@ -1258,26 +1282,25 @@ def daily_et(h_inst, g_inst, rn_inst, lst_dem, rad_24h):
 
     # Instantaneous Latent Heat flux [W m-2]
     le_inst = h_inst.expression(
-        '(i_Rn - i_G - i_H)', {
-            'i_Rn': rn_inst, 'i_G': g_inst, 'i_H': h_inst})
+        '(i_Rn - i_G - i_H)', {'i_Rn': rn_inst, 'i_G': g_inst, 'i_H': h_inst}
+    )
 
     # Latent heat of vaporization or the heat
     # absorbed when a kilogram of water evaporates [J/kg].
-    i_lambda = h_inst.expression(
-        '(2.501 - 0.002361 * (Ts - 273.15))', {'Ts': lst_dem})
+    i_lambda = h_inst.expression('(2.501 - 0.002361 * (Ts - 273.15))', {'Ts': lst_dem})
 
     # Evaporative fraction
     i_FE = h_inst.expression(
-        'le_inst / (i_Rn - i_G)', {
-            'le_inst': le_inst, 'i_Rn': rn_inst, 'i_G': g_inst})
+        'le_inst / (i_Rn - i_G)', {'le_inst': le_inst, 'i_Rn': rn_inst, 'i_G': g_inst}
+    )
 
     # clamping between 0 and 1
     i_FE = i_FE.clamp(0, 1)
 
-    # Caculating ET using Rn24h 
+    # Calculating ET using Rn24h
     daily_et = i_FE.expression(
-        '(0.0864 * i_FE * rad_24h) / i_lambda', {
-            'i_FE': i_FE, 'i_lambda': i_lambda, 'rad_24h': rad_24h}
+        '(0.0864 * i_FE * rad_24h) / i_lambda',
+        {'i_FE': i_FE, 'i_lambda': i_lambda, 'rad_24h': rad_24h}
     )
 
     return daily_et.rename('et')
@@ -1311,7 +1334,8 @@ def et_fraction(time_start, et, et_reference_source, et_reference_band, et_refer
     date = ee.Date(time_start)
     start_date = ee.Date(utils.date_to_time_0utc(date))
 
-    eto = (ee.ImageCollection(et_reference_source)
+    eto = (
+        ee.ImageCollection(et_reference_source)
         .select(et_reference_band)
         .filterDate(start_date, start_date.advance(1, 'day'))
     )
