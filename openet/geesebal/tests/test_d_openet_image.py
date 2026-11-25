@@ -92,10 +92,6 @@ def default_image_args(
         et_reference_band='etr',
         et_reference_factor=0.85,
         et_reference_resample='nearest',
-        # CGM - Dropping number of calibrations points and iterations for testing
-        #   to avoid memory errors and timeouts
-        calibration_points=1,
-        max_iterations=4,
         ):
     return {
         'image': default_image(
@@ -113,8 +109,6 @@ def default_image_args(
         'et_reference_band': et_reference_band,
         'et_reference_factor': et_reference_factor,
         'et_reference_resample': et_reference_resample,
-        'calibration_points': calibration_points,
-        'max_iterations': max_iterations,
     }
 
 
@@ -137,10 +131,6 @@ def default_image_obj(
         et_reference_band='etr',
         et_reference_factor=0.85,
         et_reference_resample='nearest',
-        # CGM - Dropping number of calibrations points and iterations for testing
-        #   to avoid memory errors and timeouts
-        calibration_points=1,
-        max_iterations=4,
         ):
     return geesebal.Image(**default_image_args(
         albedo=albedo,
@@ -161,8 +151,6 @@ def default_image_obj(
         et_reference_band=et_reference_band,
         et_reference_factor=et_reference_factor,
         et_reference_resample=et_reference_resample,
-        calibration_points=calibration_points,
-        max_iterations=max_iterations,
     ))
 
 
@@ -239,12 +227,10 @@ def test_Image_et_reference_properties():
     [
         ['IDAHO_EPSCOR/GRIDMET', 'etr', 1, TEST_POINT, 11.2],
         ['IDAHO_EPSCOR/GRIDMET', 'etr', 0.85, TEST_POINT, 11.2 * 0.85],
-        ['projects/openet/assets/reference_et/california/cimis/daily/v1',
-         'etr', 1, TEST_POINT, 10.174],
-        ['projects/openet/reference_et/california/cimis/daily/v1',
-         'etr', 1, TEST_POINT, 10.174],
-        # ['projects/earthengine-legacy/assets/projects/climate-engine/cimis/daily',
-        #  'ETr_ASCE', 1, TEST_POINT, 10.125],
+        [
+            'projects/openet/assets/reference_et/california/cimis/daily/v1',
+            'etr', 1, TEST_POINT, 10.174
+        ],
         [10, 'FOO', 1, TEST_POINT, 10.0],
         [10, 'FOO', 0.85, TEST_POINT, 8.5],
     ]
