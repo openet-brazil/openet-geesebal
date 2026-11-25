@@ -10,7 +10,6 @@ DEG2RAD = math.pi / 180.0
 # TODO: savi variable is not currently used but is being read from image instead
 #   The image input could probably be dropped if sun_elevation was passed in instead
 def et(
-    image, 
     ndvi,
     ndwi,
     lst,
@@ -30,6 +29,7 @@ def et(
     ndvi_hot,
     lst_cold,
     lst_hot,
+    sun_elevation,
     time_start,
     geometry_image,
     proj,
@@ -41,8 +41,6 @@ def et(
 
     Parameters
     ----------
-    image : ee.Image
-        Landsat image.
     ndvi : ee.Image
         Normalized difference vegetation index.
     ndwi : ee.Image
@@ -81,6 +79,8 @@ def et(
         Lst Percentile value to determinate cold pixel.
     lst_hot : ee.Number, int
         Lst Percentile value to determinate hot pixel.
+    sun_elevation : ee.Number, float
+        Sun elevation angle read from Landsat SUN_ELEVATION property [deg].
     time_start : str
         Image property: time start of the image.
     geometry_image : ee.Geometry
@@ -119,7 +119,7 @@ def et(
     coldest_lst = ee.Number(lst_cold)
 
     # Sun elevation []
-    sun_elevation = ee.Number(image.get('SUN_ELEVATION'))
+    # sun_elevation = ee.Number(image.get('SUN_ELEVATION'))
     
     # Terrain cos
     cos_zn = cos_terrain(time_start, elevation, hour, minutes, coords)
@@ -160,9 +160,7 @@ def et(
         )
         
         # Instantaneous sensible heat flux [W m-2]
-        h_inst = sensible_heat_flux(
-            image.addBands(lst_dem.rename('lst_dem')), ux, n_Ts_cold, hot_pixels, elevation
-        )
+        h_inst = sensible_heat_flux(lst_dem, savi, ux, n_Ts_cold, hot_pixels, elevation)
         
         # Daily evapotranspiration [mm day-1]
         et_24hr = daily_et(h_inst, g_inst, rad_inst, lst_dem, rad_24h)
@@ -1031,14 +1029,16 @@ def hot_pixel(ndvi, ndwi, lst_dem, rn, g, ndvi_hot, lst_hot, geometry_image, coo
         )
 
 
-def sensible_heat_flux(image, ux, n_Ts_cold, d_hot_pixel, elev):
+def sensible_heat_flux(lst_dem, savi, ux, n_Ts_cold, d_hot_pixel, elev):
     """
     Instantaneous Sensible Heat Flux [W m-2]
 
     Parameters
     ----------
-    image : ee.Image
-        Landsat image.
+    lst_dem : ee.Image
+        Land surface temperature [K].
+    savi : ee.Image
+        Soil-adjusted vegetation index.
     ux : ee.Image
         Wind speed [m s-1].
     n_Ts_cold : ee.FeatureCollection
@@ -1094,9 +1094,6 @@ def sensible_heat_flux(image, ux, n_Ts_cold, d_hot_pixel, elev):
     list_long_hot = ee.List(d_hot_pixel.get('list_x'))
     list_lat_hot = ee.List(d_hot_pixel.get('list_y'))
 
-    # SAVI
-    i_savi = image.select('savi')
-
     # Momentum roughness length at the weather station (Allen2002 Eqn 28)
     n_zom = ee.Number(n_veg_height).multiply(0.12)
 
@@ -1113,19 +1110,19 @@ def sensible_heat_flux(image, ux, n_Ts_cold, d_hot_pixel, elev):
     pts_collection = ee.FeatureCollection(indices.map(create_points))
 
     # Friction velocity at the weather station (Allen2002 Eqn 37)
-    i_ufric_ws = i_savi.expression(
+    i_ufric_ws = savi.expression(
         '(n_K * ux) / log(n_zx / n_zom)',
         {'n_K': n_K, 'n_zx': n_zx, 'n_zom': n_zom, 'ux': ux}
     )
     
     # Wind speed at blending height at the weather station  (Allen2002 Eqn 29)
-    i_u200 = i_savi.expression(
+    i_u200 = savi.expression(
         'i_ufric_ws * log(n_height / n_zom) / n_K',
         {'i_ufric_ws': i_ufric_ws, 'n_height': n_height, 'n_zom': n_zom, 'n_K': n_K}
     )
     
     # Momentum roughness length for each pixel
-    i_zom = i_savi.expression('exp((5.62 * SAVI) - 5.809)', {'SAVI': i_savi})
+    i_zom = savi.expression('exp((5.62 * SAVI) - 5.809)', {'SAVI': savi})
 
     # Slope/ Aspect
     slope_aspect = ee.Terrain.products(elev)
@@ -1172,19 +1169,18 @@ def sensible_heat_flux(image, ux, n_Ts_cold, d_hot_pixel, elev):
         
         n_coef_a = (n_dT_cold.subtract(n_dT_hot)).divide(n_Ts_cold.subtract(n_Ts_hot))
         n_coef_b = n_dT_hot.subtract(n_coef_a.multiply(n_Ts_hot))
-       
-        i_lst_med = image.select('lst_dem')
+
         i_dT_int = ee.Image(0).expression(
             '(n_coef_a * i_lst_med) + n_coef_b',
-            {'n_coef_a': n_coef_a, 'n_coef_b': n_coef_b, 'i_lst_med': i_lst_med}
+            {'n_coef_a': n_coef_a, 'n_coef_b': n_coef_b, 'i_lst_med': lst_dem}
         ).rename('dT')
     
-        i_Ta = i_lst_med.subtract(i_dT_int)
+        i_Ta = lst_dem.subtract(i_dT_int)
         i_ro = i_Ta.expression('(-0.0046 * i_Ta) + 2.5538', {'i_Ta': i_Ta}).rename('ro')
      
         i_H_step = i_dT_int.expression( 
             '(i_ro * n_Cp * i_dT_int) / i_rah',
-            {'i_ro': i_ro, 'n_Cp': n_Cp, 'i_dT_int': i_dT_int,'i_rah': i_rah}
+            {'i_ro': i_ro, 'n_Cp': n_Cp, 'i_dT_int': i_dT_int, 'i_rah': i_rah}
         ).rename('H')
           
         if n == 1:
@@ -1198,7 +1194,7 @@ def sensible_heat_flux(image, ux, n_Ts_cold, d_hot_pixel, elev):
                 'i_ro': i_ro,
                 'n_Cp': n_Cp,
                 'i_ufric': i_ufric_loop,
-                'i_lst_med': i_lst_med,
+                'i_lst_med': lst_dem,
                 'i_H_int': i_H_int 
             }
         ).rename('L')

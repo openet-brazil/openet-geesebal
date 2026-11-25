@@ -110,6 +110,7 @@ class Image:
                           .cat(ee.String(scene_id.get(1))).cat("_")
                           .cat(ee.String(scene_id.get(2)))
         )
+        self.sun_elevation = ee.Number(self.image.get('SUN_ELEVATION'))
 
         # Build WRS2_TILE from the scene_id
         self._wrs2_tile = ee.String("p").cat(self._scene_id.slice(5, 8)).cat("r").cat(self._scene_id.slice(8, 11))
@@ -423,7 +424,6 @@ class Image:
             raise Exception("Unsupported meteorology source(s)")
 
         et = model.et(
-            image=self.image,
             ndvi=self.ndvi,
             ndwi=self.ndwi,
             lst=self.lst,
@@ -443,6 +443,7 @@ class Image:
             ndvi_hot=self._ndvi_hot,
             lst_cold=self._lst_cold,
             lst_hot=self._lst_hot,
+            sun_elevation=self.sun_elevation,
             time_start=self._time_start,
             geometry_image=self.geometry,
             proj=self.proj,
