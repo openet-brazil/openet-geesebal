@@ -2,7 +2,8 @@ import ee
 
 
 def ndvi(landsat_image):
-    """Normalized difference vegetation index
+    """
+    Normalized difference vegetation index
 
     Parameters
     ----------
@@ -12,17 +13,15 @@ def ndvi(landsat_image):
     Returns
     -------
     ee.Image
-
-    References
-    ----------
-
     """
-    return ee.Image(landsat_image).normalizedDifference(['nir', 'red'])\
+
+    return ee.Image(landsat_image).normalizedDifference(['nir', 'red']) \
         .rename(['ndvi']).unmask(0)
 
 
 def fipar(landsat_image):
-    """Fraction of intercepted photosynthetically active radiation
+    """
+    Fraction of intercepted photosynthetically active radiation
 
     Parameters
     ----------
@@ -46,15 +45,16 @@ def fipar(landsat_image):
        AVHRR and ISLSCP-II data, validated at 16 FLUXNET sites,
        Remote Sensing of Environment,
        https://doi.org/10.1016/j.rse.2007.06.025
-
     """
+
     ndvi_clamp = ndvi(landsat_image).clamp(0.0, 1.0)
 
     return ndvi_clamp.multiply(1).subtract(0.05).clamp(0.0, 1.0).rename('fipar')
 
 
 def lai(landsat_image):
-    """Leaf area index
+    """
+    Leaf area index
 
     Parameters
     ----------
@@ -69,8 +69,8 @@ def lai(landsat_image):
     ----------
     .. [Ross1976] J. Ross, Radiative transfer in plant communities,
        In J. L. Monteith (Ed.),Vegetation and the atmosphere.
-
     """
+
     return ee.Image(landsat_image).expression('-log(1 - fIPAR) / (KPAR)', {
         'fIPAR': fipar(ee.Image(landsat_image)),
         'KPAR': ee.Number(0.5)
@@ -78,7 +78,8 @@ def lai(landsat_image):
 
 
 def ndwi(landsat_image):
-    """Normalized difference water index
+    """
+    Normalized difference water index
 
     Parameters
     ----------
@@ -88,19 +89,24 @@ def ndwi(landsat_image):
     Returns
     -------
     ee.Image
-
-    References
-    ----------
-
     """
-    return ee.Image(landsat_image).normalizedDifference(['green', 'nir'])\
+
+    return ee.Image(landsat_image).normalizedDifference(['green', 'nir']) \
         .rename('ndwi').unmask(0)
 
 
 def landsat_c2_qa_water_mask(landsat_image):
     """
     Extract water mask from the Landsat Collection 2 SR QA_PIXEL band.
-    :return: ee.Image
+
+    Parameters
+    ----------
+    landsat_image : ee.Image
+        Landsat image with standardized band names.
+
+    Returns
+    -------
+    ee.Image
     """
 
     img = ee.Image(landsat_image)
@@ -110,7 +116,8 @@ def landsat_c2_qa_water_mask(landsat_image):
 
 
 def emissivity(landsat_image):
-    """Broad-band surface emissivity
+    """
+    Broad-band surface emissivity
 
     Parameters
     ----------
@@ -120,16 +127,14 @@ def emissivity(landsat_image):
     Returns
     -------
     ee.Image
-
-    References
-    ----------
-
     """
+
     return lai(landsat_image).multiply(0.01).add(0.95).min(0.98).rename('emissivity')
 
 
 def lst(landsat_image):
-    """Land surface temperature (lst)
+    """
+    Land surface temperature
 
     Parameters
     ----------
@@ -139,11 +144,8 @@ def lst(landsat_image):
     Returns
     -------
     ee.Image
-
-    References
-    ----------
-
     """
+
     lai_img = lai(landsat_image)
     ndvi_img = ndvi(landsat_image)
 
@@ -167,7 +169,8 @@ def lst(landsat_image):
 
 
 def savi(landsat_image):
-    """Soil adjusted vegetation index
+    """
+    Soil adjusted vegetation index
 
     Parameters
     ----------
@@ -177,11 +180,8 @@ def savi(landsat_image):
     Returns
     -------
     ee.Image
-
-    References
-    ----------
-
     """
+
     savi = landsat_image.expression(
         '((1 + 0.5) * (B5 - B4)) / (0.5 + (B5 + B4))', {
             'B4': landsat_image.select('red'),
@@ -193,7 +193,8 @@ def savi(landsat_image):
 
 
 def albedo_l457(landsat_image):
-    """Albedo (Landsat 4/5/7)
+    """
+    Albedo (Landsat 4/5/7)
 
     Parameters
     ----------
@@ -210,8 +211,8 @@ def albedo_l457(landsat_image):
        At-Surface Reflectance and Albedo from Satellite for Operational
        Calculation of Land Surface Energy Balance, Journal of Hydrology,
        https://doi.org/10.1061/(ASCE)1084-0699(2008)13:2(51)
-
     """
+
     albedo = landsat_image.expression(
         '(0.254 * B1) + (0.149 * B2) + (0.147 * B3) + (0.311 * B4) + '
         '(0.103 * B5) + (0.036 * B7)', {
@@ -227,7 +228,8 @@ def albedo_l457(landsat_image):
 
 
 def albedo_l89(landsat_image):
-    """Albedo (Landsat 8/9)
+    """
+    Albedo (Landsat 8/9)
 
     Parameters
     ----------
@@ -244,7 +246,6 @@ def albedo_l89(landsat_image):
        Downscaling of MODIS One Kilometer Evapotranspiration
        Using Landsat-8 Data and Machine Learning Approaches,
        Remote Sensing, https://doi.org/10.3390/rs8030215
-
     """
 
     # CGM - These coefficients don't sum to 1.0?
@@ -271,7 +272,8 @@ def albedo_l89(landsat_image):
 
 
 def cloud_mask_sr_l457(landsat_image):
-    """Cloud mask (Landsat 4/5/7)
+    """
+    Cloud mask (Landsat 4/5/7)
 
     Parameters
     ----------
@@ -286,11 +288,8 @@ def cloud_mask_sr_l457(landsat_image):
     -----
     clear sky value = 66  (01000010)
     water value = 68   (01000100)
-
-    References
-    ----------
-
     """
+
     quality = landsat_image.select('pixel_qa')
     c01 = quality.eq(66)  # Clear (01000010)
     c02 = quality.eq(68)  # Water (01000100)
@@ -300,7 +299,8 @@ def cloud_mask_sr_l457(landsat_image):
 
 
 def cloud_mask_sr_l8(landsat_image):
-    """Cloud mask (Landsat 8)
+    """
+    Cloud mask (Landsat 8)
 
     Parameters
     ----------
@@ -315,11 +315,8 @@ def cloud_mask_sr_l8(landsat_image):
     -----
     clear sky value = 322  (00101000010)
     water value = 324   (00101000100)
-
-    References
-    ----------
-
     """
+
     quality = landsat_image.select('pixel_qa')
     c01 = quality.eq(322)
     c02 = quality.eq(324)
@@ -330,7 +327,8 @@ def cloud_mask_sr_l8(landsat_image):
 
 
 def cloud_mask_C2_l457(landsat_image):
-    """Cloud mask (Landsat 4/5/7)
+    """
+    Cloud mask (Landsat 4/5/7)
 
     Parameters
     ----------
@@ -345,11 +343,8 @@ def cloud_mask_C2_l457(landsat_image):
     -----
     clear sky value = 5440  (0001010101000000)
     water value = 5504   (0001010110000000)
-
-    References
-    ----------
-
     """
+
     quality = landsat_image.select('QA_PIXEL')
     c01 = quality.eq(5440)
     c02 = quality.eq(5504)
@@ -359,7 +354,8 @@ def cloud_mask_C2_l457(landsat_image):
 
 
 def cloud_mask_C2_l89(landsat_image):
-    """Cloud mask (Landsat 8/9)
+    """
+    Cloud mask (Landsat 8/9)
 
     Parameters
     ----------
@@ -374,11 +370,8 @@ def cloud_mask_C2_l89(landsat_image):
     -----
     clear sky value = 21824  (0001010101000000)
     water value = 21952   (0001010110000000)
-
-    References
-    ----------
-
     """
+
     quality = landsat_image.select('QA_PIXEL')
     c01 = quality.eq(21824)
     c02 = quality.eq(21952)
@@ -388,12 +381,13 @@ def cloud_mask_C2_l89(landsat_image):
 
 
 def water_mask(product='GLO'):
-    """Water maskfor precomputing
+    """
+    Water mask for precomputing
 
     Parameters
     ----------
     product : string
-        Product name. 
+        Product name.
             GLO: Water mask from the Copernicus GLO DEM.
             OSM: Water mask from OpenStreetMap.
 
@@ -401,25 +395,19 @@ def water_mask(product='GLO'):
     -------
     ee.Image
 
-    Notes
-    -----
-   
-
     References
     ----------
-    GLO 30 DGED: https://doi.org/10.5270/ESA-c5d3d65 
+    GLO 30 DGED: https://doi.org/10.5270/ESA-c5d3d65
     OSM: https://gee-community-catalog.org/projects/osm_water/
-
     """
-    if product =='GLO':
 
+    if product == 'GLO':
         water_mask = ee.Image('projects/openet/assets/features/water_mask_glo30_0p001')
-
-    elif product =='OSM':
-
+    elif product == 'OSM':
         water_mask = ee.Image('projects/openet/assets/features/water_mask_osm_0p001')
+    else:
+        raise ValueError(f'\nUnsupported water mask product: {product}')
 
-        
     return water_mask
 
 
@@ -485,3 +473,4 @@ def lst_source_image(lst_source, mask_image):
             # 'scene_id': mask_image.get('system:index'),
         })
     )
+
