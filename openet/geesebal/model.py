@@ -9,8 +9,6 @@ DEG2RAD = math.pi / 180.0
 
 # TODO: savi variable is not currently used but is being read from image instead
 #   The image input could probably be dropped if sun_elevation was passed in instead
-# TODO: elev_product should be parsed in image so that it is already "elevation"
-#   and doesn't need to have the band selected everywhere
 def et(
     image, 
     ndvi,
@@ -27,7 +25,7 @@ def et(
     rso_inst,
     rso_24h,
     tfac,
-    elev_product,
+    elevation,
     ndvi_cold,
     ndvi_hot,
     lst_cold,
@@ -73,7 +71,7 @@ def et(
         Daily incoming shortwave radiation [W m-2].
     tfac : ee.Image
         Temperature adjustment offset.
-    elev_product : ee.Image
+    elevation : ee.Image
         Elevation [m].
     ndvi_cold : ee.Number, int
         NDVI Percentile value to determinate cold pixel.
@@ -120,40 +118,37 @@ def et(
     top_ndvi = ee.Number(ndvi_cold)
     coldest_lst = ee.Number(lst_cold)
 
-    # Elevation data [m]
-    elev = ee.Image(elev_product).select('elevation')
-
     # Sun elevation []
     sun_elevation = ee.Number(image.get('SUN_ELEVATION'))
     
     # Terrain cos
-    cos_zn = cos_terrain(time_start, elev, hour, minutes, coords)
+    cos_zn = cos_terrain(time_start, elevation, hour, minutes, coords)
 
     # LL: iterative process or endmembers selections may return empty values
     # in this case, return an empty image instead of broken the code
     try:
         # Air temperature correction [K]
-        tair_dem = tair_dem_correction(tmin, tmax, elev)
+        tair_dem = tair_dem_correction(tmin, tmax, elevation)
 
         # Land surface temperature correction [K]
         lst_dem = lst_correction(
-            time_start, lst, elev, tair_dem, rh, sun_elevation, hour, minutes, coords
+            time_start, lst, elevation, tair_dem, rh, sun_elevation, hour, minutes, coords
         )
         
         # Instantaneous net radiation using reanalysis dataset [W m-2]
         rad_inst = radiation_inst(
-            elev, lst, emissivity, albedo, tair, rh, rso_inst, sun_elevation, cos_zn
+            lst, emissivity, albedo, tair, rh, elevation, rso_inst, sun_elevation, cos_zn
         )
         
         # Instantaneous soil heat flux [W m-2]
         g_inst = soil_heat_flux(rad_inst, ndvi, albedo, lst, ndwi, flag_g, year)
         
         # Daily ney radiation [W m-2]
-        rad_24h = radiation_24h(time_start, tmax, tmin, elev, rso_24h)
+        rad_24h = radiation_24h(time_start, tmax, tmin, elevation, rso_24h)
 
         # Cold pixels
         cold_pixels = cold_pixel(
-            ndvi, ndwi, lst_dem, top_ndvi, coldest_lst, geometry_image, coords, elev, proj
+            ndvi, ndwi, lst_dem, top_ndvi, coldest_lst, geometry_image, coords, elevation, proj
         )
 
         n_Ts_cold = ee.Number(cold_pixels.get('temp'))
@@ -161,12 +156,12 @@ def et(
         # Hot pixels
         hot_pixels = hot_pixel(
             ndvi, ndwi, lst_dem, rad_inst, g_inst, ndvi_hot, lst_hot,
-            geometry_image, coords, tfac, elev, proj
+            geometry_image, coords, tfac, elevation, proj
         )
         
         # Instantaneous sensible heat flux [W m-2]
         h_inst = sensible_heat_flux(
-            image.addBands(lst_dem.rename('lst_dem')), ux, n_Ts_cold, hot_pixels, elev
+            image.addBands(lst_dem.rename('lst_dem')), ux, n_Ts_cold, hot_pixels, elevation
         )
         
         # Daily evapotranspiration [mm day-1]
@@ -190,7 +185,7 @@ def tao_sw(elev, tair, rh, cos_z0):
     Parameters
     ----------
     elev : ee.Image
-        Elevation product data [m].
+        Elevation [m].
     tair : ee.Image
         Air temperature [Celsius].
     rh : ee.Image
@@ -235,7 +230,7 @@ def cos_terrain(time_start, elev, hour, minutes, coords):
     time_start : str
         Image property: time start of the image.
     elev : ee.Image
-        Elevation product data [m].
+        Elevation [m].
     hour : ee.Number, int
         Hour.
     minutes : ee.Number, int
@@ -281,7 +276,7 @@ def cos_terrain(time_start, elev, hour, minutes, coords):
 
     w = lht.subtract(12).multiply(15).multiply(DEG2RAD)
 
-    # Cosine  zenith angle elevation
+    # Cosine zenith angle elevation
     cos_zn = w.expression(
         '-a + b * w_cos + c * w_sin',
         {'a': a, 'b': b, 'c': c, 'w_cos': w.cos(), 'w_sin': w.sin()},
@@ -301,7 +296,7 @@ def tair_dem_correction(tmin, tmax, elev):
     tmax : ee.Image
         Maximum temperature [Celsius].
     elev : ee.Image
-        Elevation product data [m].
+        Elevation [m].
 
     Returns
     -------
@@ -312,12 +307,12 @@ def tair_dem_correction(tmin, tmax, elev):
     """
     tmin_dem = tmin.expression(
         'temp - 0.0065 * (dem - alt_meteo)', 
-        {'temp': tmin, 'dem': elev.select('elevation'), 'alt_meteo': ee.Number(2)}
+        {'temp': tmin, 'dem': elev, 'alt_meteo': ee.Number(2)}
     )
 
     tmax_dem = tmax.expression(
         'temp - 0.0065 * (dem - alt_meteo)', 
-        {'temp': tmax, 'dem': elev.select('elevation'), 'alt_meteo': ee.Number(2)}
+        {'temp': tmax, 'dem': elev, 'alt_meteo': ee.Number(2)}
     )
 
     tair_dem = tmin_dem.add(tmax_dem).divide(2)
@@ -325,6 +320,7 @@ def tair_dem_correction(tmin, tmax, elev):
     return tair_dem.rename('tair_dem')
 
 
+# TODO: Why are we passing in time_start and hour/minutes?
 def lst_correction(time_start, lst, elev, tair, rh, sun_elevation, hour, minutes, coords):
     """
     Correct declivity and aspect effects from Land Surface Temperature.
@@ -336,7 +332,7 @@ def lst_correction(time_start, lst, elev, tair, rh, sun_elevation, hour, minutes
     lst : ee.Image
         Land surface temperature [K]
     elev : ee.Image
-        Elevation product data [m].
+        Elevation [m].
     tair : ee.Image
         Air temperature [Celsius].
     rh : ee.Image
@@ -386,7 +382,7 @@ def lst_correction(time_start, lst, elev, tair, rh, sun_elevation, hour, minutes
     temp_lapse_rate = ee.Number(0.0065)
 
     # Correcting land surface temperature [K] with temperature lapse rate
-    temp_corr = lst.add(elev.select('elevation').multiply(temp_lapse_rate))
+    temp_corr = lst.add(elev.multiply(temp_lapse_rate))
 
     cos_zn = cos_terrain(time_start, elev, hour, minutes, coords)
 
@@ -397,8 +393,14 @@ def lst_correction(time_start, lst, elev, tair, rh, sun_elevation, hour, minutes
     lst_dem = lst.expression(
         'Temp_corr + (Gsc * dr * Transm_corr * cos_zn - Gsc * dr * Transm_corr * cos_zenith_flat) / '
         '(air_dens * 1004 * 0.050)',
-        {'Temp_corr': temp_corr, 'Gsc': gsc, 'dr': dr, 'Transm_corr': tao_sw_img,
-         'cos_zenith_flat': cos_theta, 'cos_zn': cos_zn, 'air_dens': air_dens},
+        {
+            'Temp_corr': temp_corr,
+            'Gsc': gsc,
+            'dr': dr,
+            'Transm_corr': tao_sw_img,
+            'cos_zenith_flat': cos_theta,
+            'cos_zn': cos_zn,
+            'air_dens': air_dens},
     )
 
     return lst_dem.rename('lst_dem')
@@ -449,15 +451,15 @@ def homogeneous_mask(ndvi, proj):
     return ee.Image(cv_mask)
 
 
-def slope_mask(elev, proj):  
+def slope_mask(elev, proj):
     """
     Applies a filter for slope values in the image, allowing only pixels from flat 
     regions to be selected as endmembers
 
     Parameters
     ----------
-    dem : ee.Image
-        Digital Elevation Model (dem).
+    elev : ee.Image
+        Elevation [m].
     proj : ee.Dictionary
         Landsat image projection.
 
@@ -478,14 +480,12 @@ def slope_mask(elev, proj):
     return ee.Image(slp_mask)
 
 
-def radiation_inst(dem, lst, emissivity, albedo, tair, rh, swdown_inst, sun_elevation, cos_terrain):
+def radiation_inst(lst, emissivity, albedo, tair, rh, elev, swdown_inst, sun_elevation, cos_terrain):
     """
     Instantaneous Net Radiation [W m-2]
 
     Parameters
     ----------
-    dem : ee.Image
-        Digital elevation product [m].
     lst : ee.Image
         Land surface temperature [k].
     emissivity : ee.Image
@@ -496,6 +496,8 @@ def radiation_inst(dem, lst, emissivity, albedo, tair, rh, swdown_inst, sun_elev
         Air temperature [Celsius].
     rh : ee.Image
         Relative Humidity [%].
+    elev : ee.Image
+        Elevation [m].
     swdown_inst : ee.Image
         Instantaneous Short Wave radiation [W m-2].
     sun_elevation : ee.Number, int
@@ -516,7 +518,7 @@ def radiation_inst(dem, lst, emissivity, albedo, tair, rh, swdown_inst, sun_elev
     rad_long_up = lst.expression('emi * 5.67e-8 * (lst ** 4)', {'emi': emissivity, 'lst': lst})
 
     # Transmissivity 
-    tao_sw_img = tao_sw(dem, tair, rh, cos_terrain)
+    tao_sw_img = tao_sw(elev, tair, rh, cos_terrain)
 
     log_taosw = tao_sw_img.log()
 
@@ -889,7 +891,7 @@ def hot_pixel(ndvi, ndwi, lst_dem, rn, g, ndvi_hot, lst_hot, geometry_image, coo
     tfac : ee.Image
         Temperature adjustment offset [K].
     elev : ee.Image
-        Digital elevation product [m].
+        Elevation [m].
     proj : ee.Dictionary
         Landsat image projection.
 
@@ -1044,7 +1046,7 @@ def sensible_heat_flux(image, ux, n_Ts_cold, d_hot_pixel, elev):
     d_hot_pixel : ee.FeatureCollection
         Hot pixels.
     elev : ee.Image
-        Digital elevation product [m].
+        Elevation [m].
 
     Returns
     -------
@@ -1198,7 +1200,8 @@ def sensible_heat_flux(image, ux, n_Ts_cold, d_hot_pixel, elev):
                 'i_ufric': i_ufric_loop,
                 'i_lst_med': i_lst_med,
                 'i_H_int': i_H_int 
-            }).rename('L')
+            }
+        ).rename('L')
           
         img_zero = ee.Image(0)
         

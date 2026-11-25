@@ -18,8 +18,10 @@ def test_constant_image_value(expected=10.123456789, tol=0.000001):
 @pytest.mark.parametrize(
     'image_id, xy, scale, expected, tol',
     [
-        ['USGS/SRTMGL1_003', [-106.03249, 37.17777], 30, 2362, 0.001],
-        ['NASA/NASADEM_HGT/001', [-106.03249, 37.17777], 30, 2361, 0.001],
+        ['USGS/SRTMGL1_003', [-106.0325, 37.1778], 30, 2362, 0.001],
+        ['USGS/SRTMGL1_003', [-121.5265, 38.7399], 30, 3, 0.001],
+        ['USGS/SRTMGL1_003', [-120.0, 39.0], 30, 1898, 0.001],
+        ['NASA/NASADEM_HGT/001', [-106.0325, 37.1778], 30, 2361, 0.001],
     ]
 )
 def test_point_image_value(image_id, xy, scale, expected, tol):
@@ -32,8 +34,10 @@ def test_point_image_value(image_id, xy, scale, expected, tol):
 @pytest.mark.parametrize(
     'image_id, image_date, xy, scale, expected, tol',
     [
-        ['USGS/SRTMGL1_003', '2012-04-04', [-106.03249, 37.17777], 30, 2362, 0.001],
-        ['NASA/NASADEM_HGT/001', '2012-04-04', [-106.03249, 37.17777], 30, 2361, 0.001],
+        ['USGS/SRTMGL1_003', '2012-04-04', [-106.0325, 37.1778], 30, 2362, 0.001],
+        ['USGS/SRTMGL1_003', '2012-04-04', [-121.5265, 38.7399], 30, 3, 0.001],
+        ['USGS/SRTMGL1_003', '2012-04-04', [-120.0, 39.0], 30, 1898, 0.001],
+        ['NASA/NASADEM_HGT/001', '2012-04-04', [-106.0325, 37.1778], 30, 2361, 0.001],
     ]
 )
 def test_point_coll_value(image_id, image_date, xy, scale, expected, tol):

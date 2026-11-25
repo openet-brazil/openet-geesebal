@@ -5,7 +5,7 @@ import pprint
 import ee
 import pytest
 
-import openet.geesebal as geesebal
+import openet.geesebal as model
 import openet.geesebal.utils as utils
 # TODO: import utils from openet.core
 # import openet.core.utils as utils
@@ -83,7 +83,7 @@ def default_image_args(
         savi=0.5,
         # meteorology_source_inst='NASA/NLDAS/FORA0125_H002',
         # meteorology_source_daily='IDAHO_EPSCOR/GRIDMET',
-        # elev_source='USGS/SRTMGL1_003',
+        # elevation_source='USGS/SRTMGL1_003',
         ndvi_cold=5,
         ndvi_hot=10,
         lst_cold=20,
@@ -100,7 +100,7 @@ def default_image_args(
         ),
         # 'meteorology_source_inst': meteorology_source_inst,
         # 'meteorology_source_daily': meteorology_source_daily,
-        # 'elev_source': elev_source,
+        # 'elevation_source': elevation_source,
         'ndvi_cold': ndvi_cold,
         'ndvi_hot': ndvi_hot,
         'lst_cold': lst_cold,
@@ -122,7 +122,7 @@ def default_image_obj(
         savi=0.5,
         # meteorology_source_inst='NASA/NLDAS/FORA0125_H002',
         # meteorology_source_daily='IDAHO_EPSCOR/GRIDMET',
-        # elev_source='USGS/SRTMGL1_003',
+        # elevation_source='USGS/SRTMGL1_003',
         ndvi_cold=5,
         ndvi_hot=10,
         lst_cold=20,
@@ -132,7 +132,7 @@ def default_image_obj(
         et_reference_factor=0.85,
         et_reference_resample='nearest',
         ):
-    return geesebal.Image(**default_image_args(
+    return model.Image(**default_image_args(
         albedo=albedo,
         emissivity=emissivity,
         lai=lai,
@@ -142,7 +142,7 @@ def default_image_obj(
         savi=savi,
         # meteorology_source_inst=meteorology_source_inst,
         # meteorology_source_daily=meteorology_source_daily,
-        # elev_source=elev_source,
+        # elevation_source=elevation_source,
         ndvi_cold=ndvi_cold,
         ndvi_hot=ndvi_hot,
         lst_cold=lst_cold,
@@ -155,10 +155,10 @@ def default_image_obj(
 
 
 def test_Image_init_default_parameters():
-    m = geesebal.Image(default_image())
+    m = model.Image(default_image())
     assert m._meteorology_source_inst == 'NASA/NLDAS/FORA0125_H002'
     assert m._meteorology_source_daily == 'IDAHO_EPSCOR/GRIDMET'
-    assert m._elev_source == 'USGS/SRTMGL1_003'
+    assert m._elevation_source == 'USGS/SRTMGL1_003'
     assert m._ndvi_cold == 5
     assert m._ndvi_hot == 10
     assert m._lst_cold == 20
@@ -186,9 +186,35 @@ def test_Image_ndvi_defaults(expected=0.1, tol=0.001):
 
 
 def test_Image_ndvi_values():
-    output = utils.point_image_value(geesebal.Image.from_image_id(
+    output = utils.point_image_value(model.Image.from_image_id(
         IMAGE_ID, calibration_points=1, max_iterations=4).ndvi, TEST_POINT, 30)
     assert output['ndvi'] > 0
+
+
+def test_Image_elevation_band_name():
+    output = utils.getinfo(model.Image(default_image()).elevation)['bands'][0]['id']
+    assert output == 'elevation'
+
+
+@pytest.mark.parametrize(
+    'source, xy, expected',
+    [
+        ['USGS/SRTMGL1_003', TEST_POINT, 3],
+        ['USGS/SRTMGL1_003', [-120.0, 39.0], 1898],
+        ['2364.351', TEST_POINT, 2364.35],
+        [2364.351, TEST_POINT, 2364.35],
+    ]
+)
+def test_Image_elevation_source_values(source, xy, expected, tol=0.01):
+    output = utils.point_image_value(
+        model.Image(default_image(), elevation_source=source).elevation, xy
+    )
+    assert abs(output['elevation'] - expected) <= tol
+
+
+def test_Image_elevation_source_exception():
+    with pytest.raises(ValueError):
+        utils.getinfo(model.Image(default_image(), elevation_source=None).elevation)
 
 
 def test_Image_et_properties():
@@ -208,7 +234,7 @@ def test_Image_et_properties():
 
 
 def test_Image_et_values():
-    output = utils.point_image_value(geesebal.Image.from_image_id(
+    output = utils.point_image_value(model.Image.from_image_id(
         IMAGE_ID, calibration_points=1, max_iterations=4).et, TEST_POINT, 30)
     assert output['et'] > 0
 
@@ -254,7 +280,7 @@ def test_Image_et_fraction_properties():
 
 # # CGM - Not sure why this one doesn't run
 # def test_Image_et_fraction_values():
-#     output = utils.point_image_value(geesebal.Image.from_image_id(
+#     output = utils.point_image_value(model.Image.from_image_id(
 #         IMAGE_ID, calibration_points=1, max_iterations=4,
 #         et_reference_soruce='projects/openet/assets/reference_et/california/cimis/daily/v1',
 #         et_reference_band='eto', et_reference_factor=1.0
@@ -272,7 +298,7 @@ def test_Image_mask_properties():
 
 
 def test_Image_mask_values():
-    output = utils.point_image_value(geesebal.Image.from_image_id(
+    output = utils.point_image_value(model.Image.from_image_id(
         IMAGE_ID, calibration_points=1, max_iterations=4).mask, TEST_POINT, 30)
     assert output['mask'] > 0
 
@@ -287,7 +313,7 @@ def test_Image_time_properties():
 
 
 def test_Image_mask_values():
-    output = utils.point_image_value(geesebal.Image.from_image_id(
+    output = utils.point_image_value(model.Image.from_image_id(
         IMAGE_ID, calibration_points=1, max_iterations=4).time, TEST_POINT, 30)
     assert output['time'] > 0
 
@@ -337,7 +363,7 @@ def test_Image_calculate_variables_valueerror():
 
 def test_Image_from_landsat_c2_sr_default_image():
     """Test that the classmethod is returning a class object"""
-    output = geesebal.Image.from_landsat_c2_sr(
+    output = model.Image.from_landsat_c2_sr(
         ee.Image('LANDSAT/LC08/C02/T1_L2/LC08_038031_20130828'))
     assert type(output) == type(default_image_obj())
 
@@ -354,14 +380,14 @@ def test_Image_from_landsat_c2_sr_default_image():
 )
 def test_Image_from_landsat_c2_sr_landsat_image(image_id):
     """Test instantiating the class from a real Landsat images"""
-    output = utils.getinfo(geesebal.Image.from_landsat_c2_sr(ee.Image(image_id)).ndvi)
+    output = utils.getinfo(model.Image.from_landsat_c2_sr(ee.Image(image_id)).ndvi)
     assert output['properties']['system:index'] == image_id.split('/')[-1]
 
 
 # def test_Image_from_landsat_c2_sr_exception():
 #     """Test instantiating the class for an invalid image ID"""
 #     with pytest.raises(Exception):
-#         geesebal.Image.from_landsat_c2_sr(ee.Image('DEADBEEF'))._index.getInfo()
+#         model.Image.from_landsat_c2_sr(ee.Image('DEADBEEF'))._index.getInfo()
 
 
 @pytest.mark.parametrize(
@@ -372,13 +398,13 @@ def test_Image_from_landsat_c2_sr_landsat_image(image_id):
 )
 def test_Image_from_image_id(image_id):
     """Test instantiating the class using the from_image_id method"""
-    output = utils.getinfo(geesebal.Image.from_image_id(image_id).ndvi)
+    output = utils.getinfo(model.Image.from_image_id(image_id).ndvi)
     assert output['properties']['system:index'] == image_id.split('/')[-1]
     assert output['properties']['image_id'] == image_id
 
 
 def test_Image_from_method_kwargs():
     """Test that the init parameters can be passed through the helper methods"""
-    assert geesebal.Image.from_landsat_c2_sr(
+    assert model.Image.from_landsat_c2_sr(
         'LANDSAT/LC08/C02/T1_L2/LC08_042035_20150713',
-        elev_source='FOO')._elev_source == 'FOO'
+        elevation_source='FOO')._elevation_source == 'FOO'

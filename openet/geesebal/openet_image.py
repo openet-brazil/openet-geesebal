@@ -36,7 +36,7 @@ class Image:
         image,
         meteorology_source_inst="NASA/NLDAS/FORA0125_H002",
         meteorology_source_daily="IDAHO_EPSCOR/GRIDMET",
-        elev_source="USGS/SRTMGL1_003",
+        elevation_source="USGS/SRTMGL1_003",
         ndvi_cold=5,
         ndvi_hot=10,
         lst_cold=20,
@@ -58,16 +58,12 @@ class Image:
             Collection supported:
                 NLDAS: NASA/NLDAS/FORA0125_H002
                 ERA5: ECMWF/ERA5_LAND/HOURLY
-            Meteorology collection must have bands:
-                tair, ux, rh, rso_inst
         meteorology_source_daily : str
             Daily meteorology source collection ID.
             Collection supported:
                 GRIDMET: IDAHO_EPSCOR/GRIDMET
                 ERA5: projects/openet/assets/meteorology/era5land/sa/daily
-            Meteorology collection must have bands:
-                tmmn, tmmx, srad
-        elev_source : str, optional
+        elevation_source : str, optional
             Elevation source image ID.
         ndvi_cold : int, ee.Number, optional
             NDVI Percentile value to determinate cold pixel
@@ -118,7 +114,7 @@ class Image:
         # Build WRS2_TILE from the scene_id
         self._wrs2_tile = ee.String("p").cat(self._scene_id.slice(5, 8)).cat("r").cat(self._scene_id.slice(8, 11))
 
-        # Set server side date/time properties using the 'system:time_start'
+        # Set server side date/time properties using the "system:time_start"
         self._date = ee.Date(self._time_start)
         self._year = ee.Number(self._date.get("year"))
         self._month = ee.Number(self._date.get("month"))
@@ -129,7 +125,7 @@ class Image:
         # Model input parameters
         self._meteorology_source_inst = meteorology_source_inst
         self._meteorology_source_daily = meteorology_source_daily
-        self._elev_source = elev_source
+        self._elevation_source = elevation_source
         self._ndvi_cold = ndvi_cold
         self._ndvi_hot = ndvi_hot
         self._lst_cold = lst_cold
@@ -188,14 +184,12 @@ class Image:
         new instance of Image class
         """
 
-        # DEADBEEF - Should the supported image collection IDs and helper
-        # function mappings be set in a property or method of the Image class?
         collection_methods = {
-            'LANDSAT/LT04/C02/T1_L2': 'from_landsat_c2_sr',
-            'LANDSAT/LT05/C02/T1_L2': 'from_landsat_c2_sr',
-            'LANDSAT/LE07/C02/T1_L2': 'from_landsat_c2_sr',
-            'LANDSAT/LC08/C02/T1_L2': 'from_landsat_c2_sr',
-            'LANDSAT/LC09/C02/T1_L2': 'from_landsat_c2_sr',
+            "LANDSAT/LT04/C02/T1_L2": "from_landsat_c2_sr",
+            "LANDSAT/LT05/C02/T1_L2": "from_landsat_c2_sr",
+            "LANDSAT/LE07/C02/T1_L2": "from_landsat_c2_sr",
+            "LANDSAT/LC08/C02/T1_L2": "from_landsat_c2_sr",
+            "LANDSAT/LC09/C02/T1_L2": "from_landsat_c2_sr",
         }
 
         try:
@@ -387,20 +381,35 @@ class Image:
         return self.image.select(["lst"]).set(self._properties)
 
     @lazy_property
+    def elevation(self):
+
+        # TODO: Add support for elevation image collections or tiles
+        if utils.is_number(self._elevation_source):
+            elev_img = ee.Image.constant(float(self._elevation_source))
+        elif isinstance(self._elevation_source, ee.computedobject.ComputedObject):
+            elev_img = self._elevation_source
+        elif isinstance(self._elevation_source, str):
+            elev_img = ee.Image(self._elevation_source)
+        else:
+            raise ValueError(f"Unsupported elevation_source: {self._elevation_source}\n")
+
+        return elev_img.select([0], ["elevation"])
+
+    @lazy_property
     def et(self):
 
         # Meteo source
         # TODO: Switch these variables to lazy_properties
         # TODO: Add support for generic image collections
         # TODO: Add support for other common sources
-        if (self._meteorology_source_inst == 'NASA/NLDAS/FORA0125_H002') and \
-                (self._meteorology_source_daily == 'IDAHO_EPSCOR/GRIDMET'):
+        if (self._meteorology_source_inst == "NASA/NLDAS/FORA0125_H002") and \
+                (self._meteorology_source_daily == "IDAHO_EPSCOR/GRIDMET"):
             tmin, tmax, tair, ux, rh, rso_inst, rso_24h, tfac = meteorology.nldas_gridmet(
                 self._time_start, self._meteorology_source_inst, self._meteorology_source_daily,
             )
         elif ((self._meteorology_source_inst == "ECMWF/ERA5_LAND/HOURLY") and
-              ('era5land' in self._meteorology_source_daily.lower() or
-               'era5_land' in self._meteorology_source_daily.lower())):
+              ("era5land" in self._meteorology_source_daily.lower() or
+               "era5_land" in self._meteorology_source_daily.lower())):
             # projects/openet/assets/meteorology/era5land/na/daily
             # projects/openet/assets/meteorology/era5land/sa/daily
             # projects/openet/assets/meteorology/era5land/eu/daily
@@ -429,7 +438,7 @@ class Image:
             rso_inst=rso_inst,
             rso_24h=rso_24h,
             tfac=tfac,
-            elev_product=self._elev_source,
+            elevation=self.elevation,
             ndvi_cold=self._ndvi_cold,
             ndvi_hot=self._ndvi_hot,
             lst_cold=self._lst_cold,
@@ -471,7 +480,7 @@ class Image:
         #   input image.  Not all models may want this though.
         # Note, doing this will cause the reference ET to be cloud masked.
         # CGM - Should the output band name match the input ETr band name?
-        return et_reference_img.rename(['et_reference']).set(self._properties)
+        return et_reference_img.rename(["et_reference"]).set(self._properties)
     
     @lazy_property
     def et_fraction(self):
@@ -485,7 +494,7 @@ class Image:
     def mask(self):
         """Mask of all active pixels (based on the final et)"""
 
-        mask = self.et.multiply(0).add(1).updateMask(1).uint8().rename(['mask'])
+        mask = self.et.multiply(0).add(1).updateMask(1).uint8().rename(["mask"])
 
         return mask.set(self._properties)
 
@@ -496,6 +505,6 @@ class Image:
     def time(self):
         """Return an image of the 0 UTC time (in milliseconds)"""
 
-        time = self.mask.double().multiply(0).add(utils.date_to_time_0utc(self._date)).rename(['time'])
+        time = self.mask.double().multiply(0).add(utils.date_to_time_0utc(self._date)).rename(["time"])
 
         return time.set(self._properties)
