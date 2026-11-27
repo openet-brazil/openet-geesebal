@@ -89,12 +89,9 @@ class Image:
             et_reference_resample : {'nearest', 'bilinear', 'bicubic', None}
                 Reference ET resampling.  The default is None which is
                 equivalent to nearest neighbor resampling.
-            cold_calibration_points : int
-                Number of cold calibration points (the default is 1).
-            hot_calibration_points : int
-                Number of hot calibration points (the default is 1).
-            max_iterations : int
-                Maximum number of iterations (the default is 15).
+            flag_g: str (optional)
+                Geographic identifier.
+                Options: 'default' to global and 'g_brazil' to Brazil.
 
         Notes
         -----
@@ -139,6 +136,11 @@ class Image:
         self._ndvi_hot = ndvi_hot
         self._lst_cold = lst_cold
         self._lst_hot = lst_hot
+
+        try:
+            self.flag_g = kwargs["flag_g"]
+        except:
+            self.flag_g = 'g_brazil'
 
         # Reference ET parameters
         try:
@@ -417,7 +419,8 @@ class Image:
             time_start=self._time_start,
             geometry_image=self.geometry,
             proj=self.proj,
-            coords=self.coords
+            coords=self.coords,
+            flag_g=self.flag_g,
         )
 
         return et.set(self._properties)

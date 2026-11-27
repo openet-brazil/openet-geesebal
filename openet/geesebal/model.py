@@ -73,6 +73,7 @@ def et(
     flag_g: str (optional)
         Geographic identifier. 
         Options: 'default' to global and 'g_brazil' to Brazil.
+
     Returns
     -------
     ee.Image
