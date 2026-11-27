@@ -49,20 +49,19 @@ class Image:
         ----------
         image : ee.Image
             A "prepped" GEESEBAL input image.
-            Image must have bands:
-                ndvi, ndwi, savi, lst, emissivity, albedo
+            Image must have bands: albedo, emissivity, lst, ndvi, ndwi, savi
             Image must have properties:
                 SUN_ELEVATION, system:id, system:index, system:time_start
         meteorology_source_inst : str, optional
             Instantaneous meteorology source collection ID.
             Collection supported:
-                NLDAS: NASA/NLDAS/FORA0125_H002
-                ERA5: ECMWF/ERA5_LAND/HOURLY
+                NLDAS2: NASA/NLDAS/FORA0125_H002
+                ERA5-Land: ECMWF/ERA5_LAND/HOURLY
         meteorology_source_daily : str
             Daily meteorology source collection ID.
             Collection supported:
                 GRIDMET: IDAHO_EPSCOR/GRIDMET
-                ERA5: projects/openet/assets/meteorology/era5land/sa/daily
+                ERA5-Land: projects/openet/assets/meteorology/era5land/sa/daily
         elevation_source : str, optional
             Elevation source image ID.
         ndvi_cold : int, ee.Number, optional
@@ -86,6 +85,9 @@ class Image:
             et_reference_resample : {'nearest', 'bilinear', 'bicubic', None}
                 Reference ET resampling.  The default is None which is
                 equivalent to nearest neighbor resampling.
+            flag_g: str, optional
+                Geographic identifier.
+                Options: 'default' to global and 'g_brazil' to Brazil.
 
         Notes
         -----
@@ -150,13 +152,18 @@ class Image:
         except:
             self.et_reference_resample = None
 
+        if ('flag_g' in kwargs.keys()) and kwargs["flag_g"]:
+            self.flag_g = kwargs["flag_g"]
+        else:
+            self.flag_g = 'default'
+
         # Check reference ET parameters
         if self.et_reference_factor and not utils.is_number(self.et_reference_factor):
             raise ValueError("et_reference_factor must be a number")
-        if self.et_reference_factor and self.et_reference_factor < 0:
+        if self.et_reference_factor and (self.et_reference_factor < 0):
             raise ValueError("et_reference_factor must be greater than zero")
         resample_methods = ["nearest", "bilinear", "bicubic"]
-        if self.et_reference_resample and self.et_reference_resample.lower() not in resample_methods:
+        if self.et_reference_resample and (self.et_reference_resample.lower() not in resample_methods):
             raise ValueError("unsupported et_reference_resample method")
 
         self.geometry = self.image.select(0).geometry()
@@ -170,7 +177,7 @@ class Image:
 
     @classmethod
     def from_image_id(cls, image_id, **kwargs):
-        """Constructs an GEESEBAL Image instance from an image ID
+        """Constructs a GEESEBAL Image instance from an image ID
 
         Parameters
         ----------
@@ -270,7 +277,7 @@ class Image:
         # CGM - Need to come up with a more robust approach,
         #   but this seems to work for now
 
-        albedo = ee.Algorithms.If(
+        albedo_image = ee.Algorithms.If(
             ee.List(["LANDSAT_8", "LANDSAT_9"]).contains(spacecraft_id),
             landsat.albedo_l89(prep_image),
             landsat.albedo_l457(prep_image),
@@ -282,6 +289,7 @@ class Image:
             landsat.cloud_mask_C2_l457(sr_image),
         )
 
+        # Prep the input LST image
         # Parse the "lst_source" and "c2_lst_correct" keyword arguments
         # Force the LST correction flag to False if the LST source parameter is set
         if ('lst_source' in kwargs.keys()) and kwargs['lst_source']:
@@ -293,7 +301,8 @@ class Image:
         else:
             c2_lst_correct = cls._C2_LST_CORRECT
 
-        # Build the input LST image
+        # LST can be built using the corrected emissivity proposed for collection 3,
+        #   read from a separate source, or read from the source level 2 image
         if c2_lst_correct:
             lst_image = openet.core.common.landsat_c2_sr_lst_correct(sr_image)
         elif ('lst_source' in kwargs.keys()) and kwargs['lst_source']:
@@ -318,7 +327,7 @@ class Image:
 
         # Build the input image
         input_image = ee.Image([
-            albedo,
+            albedo_image,
             landsat.emissivity(prep_image),
             lst_image,
             landsat.ndvi(prep_image),
@@ -359,7 +368,6 @@ class Image:
                 output_images.append(self.lst.float())
             elif v.lower() == "ndvi":
                 output_images.append(self.ndvi.float())
-            # CGM - Calculate method must support the mask and time bands
             elif v.lower() == "mask":
                 output_images.append(self.mask)
             elif v.lower() == "time":
@@ -368,51 +376,6 @@ class Image:
                 raise ValueError(f"unsupported variable: {v}")
 
         return ee.Image(output_images).set(self._properties)
-
-    @lazy_property
-    def albedo(self):
-
-        return self.image.select(["albedo"]).set(self._properties)
-
-    @lazy_property
-    def emissivity(self):
-
-        return self.image.select(["emissivity"]).set(self._properties)
-
-    @lazy_property
-    def lst(self):
-
-        return self.image.select(["lst"]).set(self._properties)
-
-    @lazy_property
-    def ndvi(self):
-
-        return self.image.select(["ndvi"]).set(self._properties)
-
-    @lazy_property
-    def ndwi(self):
-
-        return self.image.select(["ndwi"]).set(self._properties)
-
-    @lazy_property
-    def savi(self):
-
-        return self.image.select(["savi"]).set(self._properties)
-
-    @lazy_property
-    def elevation(self):
-
-        # TODO: Add support for elevation image collections or tiles
-        if utils.is_number(self._elevation_source):
-            elev_img = ee.Image.constant(float(self._elevation_source))
-        elif isinstance(self._elevation_source, ee.computedobject.ComputedObject):
-            elev_img = self._elevation_source
-        elif isinstance(self._elevation_source, str):
-            elev_img = ee.Image(self._elevation_source)
-        else:
-            raise ValueError(f"Unsupported elevation_source: {self._elevation_source}\n")
-
-        return elev_img.select([0], ["elevation"])
 
     @lazy_property
     def et(self):
@@ -465,7 +428,8 @@ class Image:
             time_start=self._time_start,
             geometry_image=self.geometry,
             proj=self.proj,
-            coords=self.coords
+            coords=self.coords,
+            flag_g=self.flag_g,
         )
 
         return et.set(self._properties)
@@ -487,24 +451,77 @@ class Image:
             )
             et_reference_img = ee.Image(et_reference_coll.first())
             if self.et_reference_resample in ["bilinear", "bicubic"]:
-                et_reference_img = et_reference_img.reproject(self.image.projection()).resample(self.et_reference_resample)
+                et_reference_img = (
+                    et_reference_img
+                    .reproject(self.image.projection())
+                    .resample(self.et_reference_resample)
+                )
         else:
             raise ValueError(f"unsupported et_reference_source: {self.et_reference_source}")
 
         if self.et_reference_factor:
             et_reference_img = et_reference_img.multiply(self.et_reference_factor)
 
-        # Map ETr values directly to the input (i.e. Landsat) image pixels
-        # The benefit of this is the ETr image is now in the same crs as the
-        #   input image.  Not all models may want this though.
-        # Note, doing this will cause the reference ET to be cloud masked.
-        # CGM - Should the output band name match the input ETr band name?
         return et_reference_img.rename(["et_reference"]).set(self._properties)
+
+        # # Map ETr values directly to the input (i.e. Landsat) image pixels
+        # # The benefit of this is the ETr image is now in the same crs as the
+        # #   input image.  Not all models may want this though.
+        # # Note, doing this will cause the reference ET to be cloud masked.
+        # return (
+        #     self.ndvi.multiply(0).add(et_reference_img)
+        #     .rename(['et_reference']).set(self._properties)
+        # )
     
     @lazy_property
     def et_fraction(self):
         """Fraction of reference ET (equivalent to the Kc)"""
         return self.et.divide(self.et_reference).rename(["et_fraction"]).set(self._properties)
+
+    @lazy_property
+    def elevation(self):
+
+        # TODO: Add support for elevation image collections or tiles
+        if utils.is_number(self._elevation_source):
+            elev_img = ee.Image.constant(float(self._elevation_source))
+        elif isinstance(self._elevation_source, ee.computedobject.ComputedObject):
+            elev_img = self._elevation_source
+        elif isinstance(self._elevation_source, str):
+            elev_img = ee.Image(self._elevation_source)
+        else:
+            raise ValueError(f"Unsupported elevation_source: {self._elevation_source}\n")
+
+        return elev_img.select([0], ["elevation"])
+
+    @lazy_property
+    def albedo(self):
+
+        return self.image.select(["albedo"]).set(self._properties)
+
+    @lazy_property
+    def emissivity(self):
+
+        return self.image.select(["emissivity"]).set(self._properties)
+
+    @lazy_property
+    def lst(self):
+
+        return self.image.select(["lst"]).set(self._properties)
+
+    @lazy_property
+    def ndvi(self):
+
+        return self.image.select(["ndvi"]).set(self._properties)
+
+    @lazy_property
+    def ndwi(self):
+
+        return self.image.select(["ndwi"]).set(self._properties)
+
+    @lazy_property
+    def savi(self):
+
+        return self.image.select(["savi"]).set(self._properties)
 
     # CGM - The mask band is currently needed for the time band
     # If the model does not do any additional masking we might be able to

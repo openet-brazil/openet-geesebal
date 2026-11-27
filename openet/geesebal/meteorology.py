@@ -1,12 +1,14 @@
 import ee
 
 
+# TODO: The "rso_inst" naming (in both functions) is probably not valid
+#   given that these are incoming solar radiation, not the theoretical "clear sky" incoming solar
 def nldas_gridmet(time_start, meteorology_source_inst, meteorology_source_daily):
     """
 
     Parameters
     ----------
-    time_start : str
+    time_start : ee.Number, int, str
         Image property: time start of the image.
     meteorology_source_inst : ee.ImageCollection, str
         Instantaneous meteorological data.
@@ -183,7 +185,7 @@ def era5land(time_start, meteorology_source_inst, meteorology_source_daily):
 
     Parameters
     ----------
-    time_start : str
+    time_start : ee.Number, int, str
         Image property: time start of the image.
     meteorology_source_inst : ee.ImageCollection, str
         Instantaneous meteorological data.
