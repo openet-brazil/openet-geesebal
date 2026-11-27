@@ -23,7 +23,6 @@ interp_args = {
     'interp_source': 'IDAHO_EPSCOR/GRIDMET',
     'interp_band': 'eto',
     'interp_resample': 'nearest',
-    # 'interp_factor': 0.85,
 }
 
 
@@ -40,14 +39,9 @@ def default_coll_args():
             'et_reference_band': 'eto',
             'et_reference_factor': 0.85,
             'et_reference_resample': 'nearest',
-            # CGM - Dropping number of calibrations points and iterations for testing
-            #   to avoid memory errors and timeouts
-            'calibration_points': 1,
-            'max_iterations': 4,
             'cloudmask_args': {'cloud_score_flag': False, 'filter_flag': False},
         },
         'filter_args': {},
-        # 'interp_args': {},
     }
 
 
@@ -68,14 +62,12 @@ def test_Collection_init_default_parameters():
     args = default_coll_args().copy()
     del args['variables']
     del args['model_args']
-    # del args['interp_args']
 
     m = geesebal.Collection(**args)
     assert m.variables == None
     assert m.cloud_cover_max == 70
     assert m.model_args == {}
     assert m.filter_args == {}
-    # assert m.interp_args == {}
 
 
 def test_Collection_init_collection_str(coll_id='LANDSAT/LC08/C02/T1_L2'):
@@ -142,23 +134,6 @@ def test_Collection_init_cloud_cover_exception():
         default_coll_obj(cloud_cover_max=101)
 
 
-# # TODO: Test for Error if geometry is not ee.Geometry
-# def test_Collection_init_geometry_exception():
-#     """Test if Exception is raised for an invalid geometry"""
-#     args = default_coll_args()
-#     args['geometry'] = 'DEADBEEF'
-#     s = geesebal.Collection(**args)
-#     assert utils.getinfo(s.geometry) ==
-
-
-# TODO: Test if a geojson string can be passed for the geometry
-# def test_Collection_init_geometry_geojson():
-#     """Test that the system:index from a merged collection is parsed"""
-#     args = default_coll_args()
-#     s = geesebal.Collection(**args)
-#     assert utils.getinfo(s._scene_id) == SCENE_ID
-
-
 def test_Collection_build_default():
     output = utils.getinfo(default_coll_obj()._build())
     assert output['type'] == 'ImageCollection'
@@ -169,9 +144,7 @@ def test_Collection_build_default():
 
 def test_Collection_build_variables_custom(variable='ndvi'):
     # Check that setting the build variables overrides the collection variables
-    output = utils.getinfo(
-        default_coll_obj()._build(variables=[variable]).first().bandNames()
-    )
+    output = utils.getinfo(default_coll_obj()._build(variables=[variable]).first().bandNames())
     assert set(output) == {variable}
 
 
@@ -231,88 +204,96 @@ def test_Collection_build_cloud_cover():
 
 
 @pytest.mark.parametrize(
-    'collection, start_date, end_date',
+    'collection_id, start_date, end_date',
     [
         ['LANDSAT/LT05/C02/T1_L2', '2012-01-01', '2013-01-01'],
     ]
 )
-def test_Collection_build_filter_dates_lt05(collection, start_date, end_date):
+def test_Collection_build_filter_dates_lt05(collection_id, start_date, end_date):
     """Test that bad Landsat 5 images are filtered"""
-    output = utils.getinfo(default_coll_obj(
-        collections=[collection], start_date=start_date, end_date=end_date,
-        geometry=ee.Geometry.Rectangle(-125, 25, -65, 50))._build(variables=['et']))
+    coll_obj = default_coll_obj(
+        collections=[collection_id], start_date=start_date, end_date=end_date,
+        geometry=ee.Geometry.Rectangle(-125, 25, -65, 50),
+    )
+    output = utils.getinfo(coll_obj._build(variables=['et']))
     assert parse_scene_id(output) == []
 
 
 @pytest.mark.parametrize(
-    'collection, start_date, end_date',
+    'collection_id, start_date, end_date',
     [
         ['LANDSAT/LE07/C02/T1_L2', '2022-01-01', '2023-01-01'],
     ]
 )
-def test_Collection_build_filter_dates_le07(collection, start_date, end_date):
+def test_Collection_build_filter_dates_le07(collection_id, start_date, end_date):
     """Test that Landsat 7 images after 2021 are filtered"""
-    output = utils.getinfo(default_coll_obj(
-        collections=[collection], start_date=start_date, end_date=end_date,
-        geometry=ee.Geometry.Rectangle(-125, 25, -65, 50))._build(variables=['et']))
+    coll_obj = default_coll_obj(
+        collections=[collection_id], start_date=start_date, end_date=end_date,
+        geometry=ee.Geometry.Rectangle(-125, 25, -65, 50),
+    )
+    output = utils.getinfo(coll_obj._build(variables=['et']))
     assert parse_scene_id(output) == []
 
 
 @pytest.mark.parametrize(
-    'collection, start_date, end_date',
+    'collection_id, start_date, end_date',
     [
         ['LANDSAT/LC08/C02/T1_L2', '2013-01-01', '2013-04-01'],
     ]
 )
-def test_Collection_build_filter_dates_lc08(collection, start_date, end_date):
+def test_Collection_build_filter_dates_lc08(collection_id, start_date, end_date):
     """Test that pre-op Landsat 8 images before 2013-04-01 are filtered"""
-    output = utils.getinfo(default_coll_obj(
-        collections=[collection], start_date=start_date, end_date=end_date,
-        geometry=ee.Geometry.Rectangle(-125, 25, -65, 50))._build(variables=['et']))
-    assert not [x for x in parse_scene_id(output)
-                if x.split('_')[-1] < end_date.replace('-', '')]
+    coll_obj = default_coll_obj(
+        collections=[collection_id], start_date=start_date, end_date=end_date,
+        geometry=ee.Geometry.Rectangle(-125, 25, -65, 50),
+    )
+    output = utils.getinfo(coll_obj._build(variables=['et']))
+    assert not [x for x in parse_scene_id(output) if x.split('_')[-1] < end_date.replace('-', '')]
     assert parse_scene_id(output) == []
 
 
 @pytest.mark.parametrize(
-    'collection, start_date, end_date',
+    'collection_id, start_date, end_date',
     [
         ['LANDSAT/LC09/C02/T1_L2', '2021-11-01', '2022-01-01'],
     ]
 )
-def test_Collection_build_filter_dates_lc09(collection, start_date, end_date):
+def test_Collection_build_filter_dates_lc09(collection_id, start_date, end_date):
     """Test that Landsat 9 images before 2022-01-01 are filtered"""
-    output = utils.getinfo(default_coll_obj(
-        collections=[collection], start_date=start_date, end_date=end_date,
-        geometry=ee.Geometry.Rectangle(-125, 25, -65, 50))._build(variables=['et']))
-    assert not [x for x in parse_scene_id(output)
-                if x.split('_')[-1] < end_date.replace('-', '')]
+    coll_obj = default_coll_obj(
+        collections=[collection_id], start_date=start_date, end_date=end_date,
+        geometry=ee.Geometry.Rectangle(-125, 25, -65, 50),
+    )
+    output = utils.getinfo(coll_obj._build(variables=['et']))
+    assert not [x for x in parse_scene_id(output) if x.split('_')[-1] < end_date.replace('-', '')]
     assert parse_scene_id(output) == []
 
 
 def test_Collection_build_filter_args_keyword():
     # Need to test with two collections to catch bug when deepcopy isn't used
-    collections = ['LANDSAT/LC08/C02/T1_L2', 'LANDSAT/LE07/C02/T1_L2']
+    collection_ids = ['LANDSAT/LC08/C02/T1_L2', 'LANDSAT/LE07/C02/T1_L2']
     wrs2_filter = [
         {'type': 'equals', 'leftField': 'WRS_PATH', 'rightValue': 44},
-        {'type': 'equals', 'leftField': 'WRS_ROW', 'rightValue': 33}]
+        {'type': 'equals', 'leftField': 'WRS_ROW', 'rightValue': 33},
+    ]
     coll_obj = default_coll_obj(
-        collections=collections,
+        collections=collection_ids,
         geometry=ee.Geometry.Rectangle(-125, 35, -120, 40),
-        filter_args={c: wrs2_filter for c in collections})
+        filter_args={c: wrs2_filter for c in collection_ids},
+    )
     output = utils.getinfo(coll_obj._build(variables=['et']))
     assert {x[5:11] for x in parse_scene_id(output)} == {'044033'}
 
 
 def test_Collection_build_filter_args_eeobject():
     # Need to test with two collections to catch bug when deepcopy isn't used
-    collections = ['LANDSAT/LC08/C02/T1_L2', 'LANDSAT/LE07/C02/T1_L2']
-    wrs2_filter = ee.Filter.And(ee.Filter.equals('WRS_PATH', 44),
-                                ee.Filter.equals('WRS_ROW', 33))
+    collection_ids = ['LANDSAT/LC08/C02/T1_L2', 'LANDSAT/LE07/C02/T1_L2']
+    wrs2_filter = ee.Filter.And(ee.Filter.equals('WRS_PATH', 44), ee.Filter.equals('WRS_ROW', 33))
     coll_obj = default_coll_obj(
-        collections=collections,
+        collections=collection_ids,
         geometry=ee.Geometry.Rectangle(-125, 35, -120, 40),
-        filter_args={c: wrs2_filter for c in collections})
+        filter_args={c: wrs2_filter for c in collection_ids},
+    )
     output = utils.getinfo(coll_obj._build(variables=['et']))
     assert {x[5:11] for x in parse_scene_id(output)} == {'044033'}
 
@@ -358,7 +339,7 @@ def test_Collection_interpolate_use_joins(use_joins):
     assert parse_scene_id(output) == ['20170701']
 
 
-def test_Collection_interpolate_variables_custom():
+def test_Collection_interpolate_variables_custom_et():
     output = utils.getinfo(default_coll_obj().interpolate(variables=['et'], **interp_args))
     assert {y['id'] for x in output['features'] for y in x['bands']} == {'et'}
 
@@ -384,31 +365,12 @@ def test_Collection_interpolate_t_interval_monthly():
     assert {y['id'] for x in output['features'] for y in x['bands']} == VARIABLES
 
 
-# CGM - Commenting out since it takes a really long time to run
-#   This function could probably be tested for a shorter time period
-# def test_Collection_interpolate_t_interval_annual():
-#     """Test if the annual time interval parameter works"""
-#     coll_obj = default_coll_obj(start_date='2017-01-01', end_date='2018-01-01')
-#     output = utils.getinfo(coll_obj.interpolate(t_interval='annual', **interp_args))
-#     assert output['type'] == 'ImageCollection'
-#     assert parse_scene_id(output) == ['2017']
-#     assert {y['id'] for x in output['features'] for y in x['bands']} == VARIABLES
-
-
 def test_Collection_interpolate_t_interval_custom():
     """Test if the custom time interval parameter works"""
     output = utils.getinfo(default_coll_obj().interpolate(t_interval='custom', **interp_args))
     assert output['type'] == 'ImageCollection'
     assert parse_scene_id(output) == ['20170701']
     assert {y['id'] for x in output['features'] for y in x['bands']} == VARIABLES
-
-
-# TODO: Write test for annual interpolation with a date range that is too short
-
-
-# def test_Collection_interpolate_interp_days():
-#     """Test if the interpolate interp_days parameter works"""
-#     # Is there any way to test this without pulling values at a point?
 
 
 def test_Collection_interpolate_t_interval_exception():
@@ -441,10 +403,10 @@ def test_Collection_interpolate_output_type_default():
     output = utils.getinfo(default_coll_obj(variables=vars).interpolate(**interp_args))
     output = output['features'][0]['bands']
     bands = {info['id']: i for i, info in enumerate(output)}
-    assert(output[bands['et']]['data_type']['precision'] == 'float')
-    assert(output[bands['et_reference']]['data_type']['precision'] == 'float')
-    assert(output[bands['et_fraction']]['data_type']['precision'] == 'float')
-    assert(output[bands['count']]['data_type']['precision'] == 'int')
+    assert output[bands['et']]['data_type']['precision'] == 'float'
+    assert output[bands['et_reference']]['data_type']['precision'] == 'float'
+    assert output[bands['et_fraction']]['data_type']['precision'] == 'float'
+    assert output[bands['count']]['data_type']['precision'] == 'int'
 
 
 def test_Collection_interpolate_only_interpolate_images():

@@ -20,9 +20,9 @@ SCENE_DT = datetime.fromtimestamp(SCENE_TIME / 1000.0, tz=timezone.utc)
 SCENE_DATE = SCENE_DT.strftime('%Y-%m-%d')
 SCENE_DOY = int(SCENE_DT.strftime('%j'))
 SCENE_0UTC_DT = datetime.strptime(SCENE_DATE, '%Y-%m-%d')
-SUN_ELEVATION = 64.3
-TEST_POINT = (-121.5265, 38.7399)
-# TEST_POINT = (-120.113, 36.336)
+SUN_ELEVATION = 64.2794
+TEST_POINT = (-121.5265, 38.74)  # High ET field
+# TEST_POINT = (-121.66, 38.90)  # Image centroid
 
 
 # # Should these be test fixtures instead?
@@ -165,7 +165,7 @@ def test_Image_init_default_parameters():
     # assert m._et_reference_resample == None
 
 
-# CGM - I should write image properties and image bands fixures
+# CGM - I should write image properties and image bands fixtures
 def test_Image_ndvi_properties():
     """Test band name and if properties are set on the image"""
     output = utils.getinfo(default_image_obj().ndvi)
@@ -182,8 +182,7 @@ def test_Image_ndvi_defaults(expected=0.1, tol=0.001):
 
 
 def test_Image_ndvi_values():
-    output = utils.point_image_value(model.Image.from_image_id(
-        IMAGE_ID, calibration_points=1, max_iterations=4).ndvi, TEST_POINT, 30)
+    output = utils.point_image_value(model.Image.from_image_id(IMAGE_ID).ndvi, TEST_POINT, 30)
     assert output['ndvi'] > 0
 
 
@@ -211,28 +210,6 @@ def test_Image_elevation_source_values(source, xy, expected, tol=0.01):
 def test_Image_elevation_source_exception():
     with pytest.raises(ValueError):
         utils.getinfo(model.Image(default_image(), elevation_source=None).elevation)
-
-
-def test_Image_et_properties():
-    """Test band name and if properties are set on the image"""
-    output = utils.getinfo(default_image_obj().et)
-    assert output['bands'][0]['id'] == 'et'
-    assert output['properties']['system:index'] == SCENE_ID
-    assert output['properties']['system:time_start'] == SCENE_TIME
-    assert output['properties']['image_id'] == IMAGE_ID
-
-
-# CGM - This test probably won't work since running the model with an image
-#   that is constant is not going to work
-# def test_Image_et_defaults(expected=0, tol=0.001):
-#     output = utils.point_image_value(ee.Image(default_image_obj().et), TEST_POINT)
-#     assert abs(output['et'] - expected) <= tol
-
-
-def test_Image_et_values():
-    output = utils.point_image_value(model.Image.from_image_id(
-        IMAGE_ID, calibration_points=1, max_iterations=4).et, TEST_POINT, 30)
-    assert output['et'] > 0
 
 
 def test_Image_et_reference_properties():
@@ -265,6 +242,22 @@ def test_Image_et_reference_sources(source, band, factor, xy, expected, tol=0.00
     assert abs(output['et_reference'] - expected) <= tol
 
 
+def test_Image_et_properties():
+    """Test band name and if properties are set on the image"""
+    output = utils.getinfo(default_image_obj().et)
+    assert output['bands'][0]['id'] == 'et'
+    assert output['properties']['system:index'] == SCENE_ID
+    assert output['properties']['system:time_start'] == SCENE_TIME
+    assert output['properties']['image_id'] == IMAGE_ID
+
+
+# CGM - This test probably won't work since running the model with an image
+#   that is constant is not going to work
+# def test_Image_et_defaults(expected=0, tol=0.001):
+#     output = utils.point_image_value(ee.Image(default_image_obj().et), TEST_POINT)
+#     assert abs(output['et'] - expected) <= tol
+
+
 def test_Image_et_fraction_properties():
     """Test if properties are set on the ET fraction image"""
     output =  utils.getinfo(default_image_obj().et_fraction)
@@ -277,7 +270,7 @@ def test_Image_et_fraction_properties():
 # # CGM - Not sure why this one doesn't run
 # def test_Image_et_fraction_values():
 #     output = utils.point_image_value(model.Image.from_image_id(
-#         IMAGE_ID, calibration_points=1, max_iterations=4,
+#         IMAGE_ID,
 #         et_reference_soruce='projects/openet/assets/reference_et/california/cimis/daily/v1',
 #         et_reference_band='eto', et_reference_factor=1.0
 #     ).et_fraction, TEST_POINT, 30)
@@ -294,8 +287,9 @@ def test_Image_mask_properties():
 
 
 def test_Image_mask_values():
-    output = utils.point_image_value(model.Image.from_image_id(
-        IMAGE_ID, calibration_points=1, max_iterations=4).mask, TEST_POINT, 30)
+    output = utils.point_image_value(
+        model.Image.from_image_id(IMAGE_ID).mask, TEST_POINT, 30
+    )
     assert output['mask'] > 0
 
 
@@ -308,9 +302,10 @@ def test_Image_time_properties():
     assert output['properties']['image_id'] == IMAGE_ID
 
 
-def test_Image_mask_values():
-    output = utils.point_image_value(model.Image.from_image_id(
-        IMAGE_ID, calibration_points=1, max_iterations=4).time, TEST_POINT, 30)
+def test_Image_time_values():
+    output = utils.point_image_value(
+        model.Image.from_image_id(IMAGE_ID).time, TEST_POINT, 30
+    )
     assert output['time'] > 0
 
 
@@ -445,3 +440,50 @@ def test_Image_from_method_kwargs():
     assert model.Image.from_landsat_c2_sr(
         'LANDSAT/LC08/C02/T1_L2/LC08_042035_20150713',
         elevation_source='FOO')._elevation_source == 'FOO'
+
+
+@pytest.mark.parametrize(
+    'image_id, xy, albedo, emissivity, lst, ndvi, ndwi, savi',
+    [
+        [
+            'LANDSAT/LC08/C02/T1_L2/LC08_044033_20170716', (-121.5265, 38.74),
+            0.0991, 0.9800, 305.9179, 0.8472, -0.7780, 0.4631
+        ],
+        [
+            'LANDSAT/LC08/C02/T1_L2/LC08_044033_20170716', (-121.640, 38.788),
+            0.1828, 0.9517, 328.2546, 0.1336, -0.2401, 0.0898
+        ],
+
+    ]
+)
+def test_Image_from_landsat_c2_sr_image_values(
+        image_id, xy, albedo, emissivity, lst, ndvi, ndwi, savi, tol=0.0001
+):
+    """Check the input image values at specific test point locations"""
+    image = model.Image.from_landsat_c2_sr(image_id)
+    assert abs(utils.point_image_value(image.albedo, xy)['albedo'] - albedo) <= tol
+    assert abs(utils.point_image_value(image.emissivity, xy)['emissivity'] - emissivity) <= tol
+    assert abs(utils.point_image_value(image.lst, xy)['lst'] - lst) <= tol
+    assert abs(utils.point_image_value(image.ndvi, xy)['ndvi'] - ndvi) <= tol
+    assert abs(utils.point_image_value(image.ndwi, xy)['ndwi'] - ndwi) <= tol
+    assert abs(utils.point_image_value(image.savi, xy)['savi'] - savi) <= tol
+
+
+def test_Image_et_values():
+    output = utils.point_image_value(model.Image.from_image_id(IMAGE_ID).et, TEST_POINT, 30)
+    assert output['et'] > 0
+
+
+@pytest.mark.parametrize(
+    'image_id, xy, flag_g, et',
+    [
+        ['LANDSAT/LC08/C02/T1_L2/LC08_044033_20170716', (-121.5265, 38.74), 'default', 7.1812],
+        ['LANDSAT/LC08/C02/T1_L2/LC08_044033_20170716', (-121.640, 38.788), 'default', 3.8362],
+        ['LANDSAT/LC08/C02/T1_L2/LC08_044033_20170716', (-121.5265, 38.74), 'g_brazil', 7.2335],
+        ['LANDSAT/LC08/C02/T1_L2/LC08_044033_20170716', (-121.640, 38.788), 'g_brazil', 3.0552],
+    ]
+)
+def test_Image_from_landsat_c2_sr_et_values(image_id, xy, et, flag_g, tol=0.0001):
+    """Check the output ET values at specific test point locations"""
+    image = model.Image.from_landsat_c2_sr(image_id, flag_g=flag_g)
+    assert abs(utils.point_image_value(image.et, xy)['et'] - et) <= tol

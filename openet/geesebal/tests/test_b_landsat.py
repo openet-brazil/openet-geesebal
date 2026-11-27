@@ -16,6 +16,7 @@ SCENE_ID = 'LC08_044033_20170716'
 SCENE_DT = datetime.strptime(SCENE_ID[-8:], '%Y%m%d')
 SCENE_DATE = SCENE_DT.strftime('%Y-%m-%d')
 SCENE_TIME = utils.millis(SCENE_DT)
+# SUN_ELEVATION = 64.27935371
 
 
 def landsat_image(ultra_blue=0.2, blue=0.2, green=0.2, red=0.2, nir=0.7,
@@ -35,24 +36,31 @@ def test_ndvi_band_name():
 @pytest.mark.parametrize(
     'red, nir, expected',
     [
-        # Default image
+        # Default image values
         [0.2, 0.7, 0.55555555],
         # CGM - We don't really need to test all these but having the table of
         #   values is helpful for checking the other functions that use NDVI
         [0.2, 9.0 / 55, -0.1],    # 0.163636
         [0.2, 0.2, 0.0],
-        # [0.1, 11.0 / 90,  0.1], # 0.122222
-        # [0.2, 0.3, 0.2],
-        # [0.1, 13.0 / 70, 0.3],  # 0.185714
-        # [0.3, 0.7, 0.4],
-        # [0.2, 0.6, 0.5],
-        # [0.2, 0.8, 0.6],
-        # [0.1, 17.0 / 30, 0.7],  # 0.566666
-        # [0.1, 0.9, 0.8],
-        # [0.05, 0.95, 0.9],
-        # Extreme values
-        # [0.2, 0.1, -0.333333],    # 0.163636
-        # [0.01, 0.99, 0.98],
+        [0.1, 11.0 / 90,  0.1], # 0.122222
+        [0.2, 0.3, 0.2],
+        [0.1, 13.0 / 70, 0.3],  # 0.185714
+        [0.3, 0.7, 0.4],
+        [0.2, 0.6, 0.5],
+        [0.2, 0.8, 0.6],
+        [0.1, 17.0 / 30, 0.7],  # 0.566666
+        [0.1, 0.9, 0.8],
+        [0.05, 0.95, 0.9],
+        # CGM - NDVI is default to 0 for these tests since it is using .unmask(0)
+        # Check that negative reflectance values are not masked
+        # [-0.01, 0.1, 1.0],
+        # [0.1, -0.01, -1.0],
+        # Check that low values are set to 0
+        [-0.1, -0.1, 0.0],
+        [0.0, 0.0, 0.0],
+        [0.009, 0.009, 0.0],
+        [0.009, -0.01, 0.0],
+        [-0.01, 0.009, 0.0],
     ]
 )
 def test_ndvi_values(red, nir, expected, tol=0.000001):
@@ -88,31 +96,6 @@ def test_fipar_band_name():
 def test_fipar_values(red, nir, expected, tol=0.000001):
     output = utils.constant_image_value(landsat.fipar(landsat_image(red=red, nir=nir)))
     assert abs(output['fipar'] - expected) <= tol
-
-
-def test_lai_band_name():
-    assert landsat.lai(landsat_image()).getInfo()['bands'][0]['id'] == 'lai'
-
-
-@pytest.mark.parametrize(
-    'red, nir, expected',
-    [
-        # Commented out values are the NDVI
-        # CGM - These values seem low
-        [0.2, 0.1, 0],          # -0.1
-        [0.2, 0.2, 0],          # 0.0
-        [0.2, 0.3, 0.32504],    # 0.2
-        [0.3, 0.7, 0.86157],    # 0.4
-        [0.2, 0.7, 1.40864],    # 0.5555
-        [0.2, 0.8, 1.59702],    # 0.6
-        [0.1, 0.9, 2.77259],    # 0.8
-        [0.05, 0.95, 3.7942],   # 0.9
-        [0.01, 0.99, 5.3185],   # 0.98
-    ]
-)
-def test_lai_values(red, nir, expected, tol=0.0001):
-    output = utils.constant_image_value(landsat.lai(landsat_image(red=red, nir=nir)))
-    assert abs(output['lai'] - expected) <= tol
 
 
 def test_ndwi_band_name():
@@ -322,3 +305,19 @@ def test_cloud_mask_C2_l89(img_value, expected):
     input_img = ee.Image.constant(int(img_value, 2)).rename(['QA_PIXEL'])
     output_img = landsat.cloud_mask_C2_l89(input_img)
     assert utils.constant_image_value(output_img)['QA_PIXEL'] == expected
+
+
+@pytest.mark.parametrize(
+    'lst_source, image_id, expected',
+    [
+        ['projects/openet/assets/lst/landsat/c02', 'LANDSAT/LC08/C02/T1_L2/LC08_044033_20170716', 1],
+    ]
+)
+def test_lst_source_image(lst_source, image_id, expected):
+    output_img = landsat.lst_source_image(
+        lst_source=lst_source,
+        mask_image=ee.Image(image_id).select(['SR_B3'])
+    )
+    output_info = utils.getinfo(output_img)
+    assert output_info['properties']['system:index'] == image_id.split('/')[-1]
+    assert output_info['properties']['lst_source_id'] == f'{lst_source}/{image_id.split("/")[-1].lower()}'
