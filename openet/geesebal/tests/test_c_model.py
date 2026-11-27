@@ -82,14 +82,14 @@ def test_tao_sw(elev, tair, rh, cos_z0, expected, tol=0.0001):
 
 
 @pytest.mark.parametrize(
-    'lst, emissivity, albedo, tair, rh, elev, swdown_inst, sun_elevation, cos_zn, expected',
+    'lst, emissivity, albedo, tair, rh, elev, rs_inst, sun_elevation, cos_zn, expected',
     [
         [305.9179, 0.9800, 0.0991, 38.6678, 17.8512, 3, 914.9171, 64.2794, 0.88257, 718.3466],
         [328.2546, 0.9517, 0.1828, 38.6678, 17.8512, 3, 914.9171, 64.2794, 0.88257, 492.0033],
     ]
 )
 def test_radiation_inst(
-        lst, emissivity, albedo, tair, rh, elev, swdown_inst, sun_elevation, cos_zn,
+        lst, emissivity, albedo, tair, rh, elev, rs_inst, sun_elevation, cos_zn,
         expected, tol=0.0001
 ):
     output = utils.constant_image_value(model.radiation_inst(
@@ -99,7 +99,7 @@ def test_radiation_inst(
         tair=ee.Image.constant(tair),
         rh=ee.Image.constant(rh),
         elev=ee.Image.constant(elev),
-        swdown_inst=ee.Image.constant(swdown_inst),
+        rs_inst=ee.Image.constant(rs_inst),
         sun_elevation=ee.Number(sun_elevation),
         cos_zn=ee.Number(cos_zn),
     ))
@@ -142,7 +142,7 @@ def test_radiation_24h(time_start, tmax, tmin, elev, rs_24h, expected, tol=0.000
         elev=ee.Image.constant(elev),
         rs_24h=ee.Image.constant(rs_24h),
     ))
-    assert abs(output['rad_24h'] - expected) <= tol
+    assert abs(output['rn_24h'] - expected) <= tol
 
 
 @pytest.mark.parametrize(
@@ -214,7 +214,7 @@ def test_cold_pixel(image_id, ndvi, temp):
 
 
 @pytest.mark.parametrize(
-    'image_id, tair, rh, swdown_inst, tfac',
+    'image_id, tair, rh, rs_inst, tfac',
     [
         [
             'LANDSAT/LC08/C02/T1_L2/LC08_044033_20170716',
@@ -222,13 +222,13 @@ def test_cold_pixel(image_id, ndvi, temp):
         ],
     ]
 )
-def test_hot_pixel(image_id, tair, rh, swdown_inst, tfac):
+def test_hot_pixel(image_id, tair, rh, rs_inst, tfac):
     image = openet.geesebal.Image.from_landsat_c2_sr(image_id)
     xy = image.geometry.centroid(maxError=1).getInfo()
     rn = model.radiation_inst(
         lst=image.lst, emissivity=image.emissivity, albedo=image.albedo,
         tair=ee.Image.constant(tair), rh=ee.Image.constant(rh),
-        elev=image.elevation, swdown_inst=ee.Image.constant(swdown_inst),
+        elev=image.elevation, rs_inst=ee.Image.constant(rs_inst),
         sun_elevation=image.sun_elevation,
         cos_zn=model.cos_terrain(
             elev=image.elevation, time_start=image._time_start, coords=image.coords
@@ -313,7 +313,7 @@ def test_daily_et(h_inst, g_inst, rn_inst, lst_dem, rn_24h, expected, tol=0.0001
         g_inst=ee.Image.constant(g_inst),
         rn_inst=ee.Image.constant(rn_inst),
         lst_dem=ee.Image.constant(lst_dem),
-        rad_24h=ee.Image.constant(rn_24h),
+        rn_24h=ee.Image.constant(rn_24h),
     ))
     assert abs(output['et'] - expected) <= tol
 

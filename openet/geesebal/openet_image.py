@@ -420,16 +420,16 @@ class Image:
             rs_24h=rs_24h,
             tfac=tfac,
             elevation=self.elevation,
-            ndvi_cold=self._ndvi_cold,
-            ndvi_hot=self._ndvi_hot,
-            lst_cold=self._lst_cold,
-            lst_hot=self._lst_hot,
             sun_elevation=self.sun_elevation,
             time_start=self._time_start,
             geometry_image=self.geometry,
             proj=self.proj,
             coords=self.coords,
             flag_g=self.flag_g,
+            ndvi_cold=self._ndvi_cold,
+            ndvi_hot=self._ndvi_hot,
+            lst_cold=self._lst_cold,
+            lst_hot=self._lst_hot,
         )
 
         return et.set(self._properties)

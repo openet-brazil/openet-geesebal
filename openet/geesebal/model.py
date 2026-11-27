@@ -10,12 +10,6 @@ DEG2RAD = math.pi / 180.0
 
 # TODO: Consider replacing coords with separate lat and lon parameters following
 #   structure of other models
-# TODO: Rename "rad_inst" and "rad_24h" variables to "rn_inst" and "rn_24r"
-# TODO: Set default values for ndvi_col, ndvi_hot, lst_cold, lst_hot
-#   The defaults are currently set in Image but they should probably be here instead
-#   (or as well)
-# TODO: The default value for flag_g should be 'default', not 'g_brazil'
-#   but the better fix for this is moving all landcover code out of model.py
 def et(
     ndvi,
     ndwi,
@@ -32,16 +26,16 @@ def et(
     rs_24h,
     tfac,
     elevation,
-    ndvi_cold,
-    ndvi_hot,
-    lst_cold,
-    lst_hot,
     sun_elevation,
     time_start,
     geometry_image,
     proj,
     coords,
-    flag_g='default'
+    flag_g='default',
+    ndvi_cold=5,
+    ndvi_hot=10,
+    lst_cold=20,
+    lst_hot=20,
 ):
     """
     Daily Evapotranspiration [mm day-1].
@@ -78,14 +72,6 @@ def et(
         Temperature adjustment offset.
     elevation : ee.Image
         Elevation [m].
-    ndvi_cold : ee.Number, int
-        NDVI Percentile value to determinate cold pixel.
-    ndvi_hot : ee.Number, int
-        NDVI Percentile value to determinate hot pixel.
-    lst_cold : ee.Number, int
-        Lst Percentile value to determinate cold pixel.
-    lst_hot : ee.Number, int
-        Lst Percentile value to determinate hot pixel.
     sun_elevation : ee.Number, float
         Sun elevation angle read from Landsat SUN_ELEVATION property [deg].
     time_start : ee.Number, int, str
@@ -99,6 +85,14 @@ def et(
     flag_g: str, optional
         Geographic identifier. 
         Options: 'default' to global and 'g_brazil' to Brazil.
+    ndvi_cold : ee.Number, int, optional
+        NDVI Percentile value to determinate cold pixel.
+    ndvi_hot : ee.Number, int, optional
+        NDVI Percentile value to determinate hot pixel.
+    lst_cold : ee.Number, int, optional
+        Lst Percentile value to determinate cold pixel.
+    lst_hot : ee.Number, int, optional
+        Lst Percentile value to determinate hot pixel.
 
     Returns
     -------
@@ -117,10 +111,6 @@ def et(
     # Image properties
     date = ee.Date(time_start)
     year = ee.Number(date.get('year'))
-
-    # Endmembers
-    top_ndvi = ee.Number(ndvi_cold)
-    coldest_lst = ee.Number(lst_cold)
     
     # Terrain cos
     cos_zn = cos_terrain(elevation, time_start, coords)
@@ -138,34 +128,35 @@ def et(
         lst_dem = lst_correction(lst, elevation, tair_dem, rh, sun_elevation, time_start, coords)
 
         # Instantaneous net radiation using reanalysis dataset [W m-2]
-        rad_inst = radiation_inst(
+        rn_inst = radiation_inst(
             lst, emissivity, albedo, tair, rh, elevation, rs_inst, sun_elevation, cos_zn
         )
 
         # Instantaneous soil heat flux [W m-2]
-        g_inst = soil_heat_flux(rad_inst, ndvi, albedo, lst, ndwi, flag_g, year)
+        g_inst = soil_heat_flux(rn_inst, ndvi, albedo, lst, ndwi, flag_g, year)
 
         # Daily ney radiation [W m-2]
-        rad_24h = radiation_24h(time_start, tmax, tmin, elevation, rs_24h)
+        rn_24h = radiation_24h(time_start, tmax, tmin, elevation, rs_24h)
 
         # Cold pixels
         cold_pixels = cold_pixel(
-            ndvi, ndwi, lst_dem, top_ndvi, coldest_lst, geometry_image, coords, elevation, proj
+            ndvi, ndwi, lst_dem, ndvi_cold, lst_cold, geometry_image, coords, elevation, proj
         )
 
         n_Ts_cold = ee.Number(cold_pixels.get('temp'))
         
         # Hot pixels
         hot_pixels = hot_pixel(
-            ndvi, ndwi, lst_dem, rad_inst, g_inst, ndvi_hot, lst_hot,
+            ndvi, ndwi, lst_dem, rn_inst, g_inst, ndvi_hot, lst_hot,
             geometry_image, coords, tfac, elevation, proj
         )
         
         # Instantaneous sensible heat flux [W m-2]
+        # Instantaneous sensible heat flux [W m-2]
         h_inst = sensible_heat_flux(lst_dem, savi, ux, n_Ts_cold, hot_pixels, elevation)
         
         # Daily evapotranspiration [mm day-1]
-        et_24hr = daily_et(h_inst, g_inst, rad_inst, lst_dem, rad_24h)
+        et_24hr = daily_et(h_inst, g_inst, rn_inst, lst_dem, rn_24h)
 
     except Exception as e:
         # CGM - We should probably log the exception so the user knows,
@@ -462,7 +453,7 @@ def slope_mask(elev, proj):
     return ee.Image(slp_mask).rename('slp_mask')
 
 
-def radiation_inst(lst, emissivity, albedo, tair, rh, elev, swdown_inst, sun_elevation, cos_zn):
+def radiation_inst(lst, emissivity, albedo, tair, rh, elev, rs_inst, sun_elevation, cos_zn):
     """
     Instantaneous Net Radiation [W m-2]
 
@@ -480,7 +471,7 @@ def radiation_inst(lst, emissivity, albedo, tair, rh, elev, swdown_inst, sun_ele
         Relative Humidity [%].
     elev : ee.Image
         Elevation [m].
-    swdown_inst : ee.Image
+    rs_inst : ee.Image
         Instantaneous Short Wave radiation [W m-2].
     sun_elevation : ee.Number, int
         Sun elevation information.
@@ -510,14 +501,14 @@ def radiation_inst(lst, emissivity, albedo, tair, rh, elev, swdown_inst, sun_ele
     cos_zeni = solar_zenith_radians.cos()
 
     # Obtaining a Short down wave radiation correcting mountainous effect 
-    swdown_inst_dem = swdown_inst.multiply(cos_zn.divide(cos_zeni))
+    rs_inst_dem = rs_inst.multiply(cos_zn.divide(cos_zeni))
 
     # Net radiation [W m-2]
     rn_inst = lst.expression(
         '((1 - alfa) * Rs_down) + Rl_down - Rl_up - ((1 - e_0) * Rl_down)',
         {
             'alfa': albedo,
-            'Rs_down': swdown_inst_dem,
+            'Rs_down': rs_inst_dem,
             'Rl_down': rad_long_down,
             'Rl_up': rad_long_up,
             'e_0': emissivity,
@@ -652,7 +643,6 @@ def radiation_24h(time_start, tmax, tmin, elev, rs_24h):
         'Ws * sin(Lat) * sin(Sd) + cos(Lat) * cos(Sd) * sin(Ws)',
         {'Ws': ws, 'Lat': lat, 'Sd': sd}
     )
-
     ra = tmax.expression(
         '((24 * 60) / pi) * Gsc * Dr * rad_a',
         {'pi': math.pi, 'Gsc': gsc, 'Dr': dr, 'rad_a': rad_a}
@@ -680,7 +670,7 @@ def radiation_24h(time_start, tmax, tmin, elev, rs_24h):
     # Convert to W m-2
     rn = rn.multiply(11.6)
 
-    return rn.rename('rad_24h')
+    return rn.rename('rn_24h')
 
 
 # TODO: Add parameters to control number of samples
@@ -1231,7 +1221,7 @@ def sensible_heat_flux(lst_dem, savi, ux, n_Ts_cold, d_hot_pixel, elev):
     return i_H_final
 
 
-def daily_et(h_inst, g_inst, rn_inst, lst_dem, rad_24h):
+def daily_et(h_inst, g_inst, rn_inst, lst_dem, rn_24h):
     """
     Daily Evapotranspiration [mm day-1]
 
@@ -1245,7 +1235,7 @@ def daily_et(h_inst, g_inst, rn_inst, lst_dem, rad_24h):
         Instantaneous Net radiation [ W m-2].
     lst_dem : ee.Image
         Land surface temperature (aspect/slope correction) [K].
-    rad_24h : ee.Image
+    rn_24h : ee.Image
         Daily Net Radiation [W m-2].
 
     Returns
@@ -1278,8 +1268,8 @@ def daily_et(h_inst, g_inst, rn_inst, lst_dem, rad_24h):
 
     # Calculating ET using Rn24h
     daily_et = i_FE.expression(
-        '(0.0864 * i_FE * rad_24h) / i_lambda',
-        {'i_FE': i_FE, 'i_lambda': i_lambda, 'rad_24h': rad_24h}
+        '(0.0864 * i_FE * rn_24h) / i_lambda',
+        {'i_FE': i_FE, 'i_lambda': i_lambda, 'rn_24h': rn_24h}
     )
 
     return daily_et.rename('et')
