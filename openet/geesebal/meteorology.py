@@ -1,10 +1,9 @@
 import ee
 
 
-# TODO: The "rso_inst" naming (in both functions) is probably not valid
-#   given that these are incoming solar radiation, not the theoretical "clear sky" incoming solar
 def nldas_gridmet(time_start, meteorology_source_inst, meteorology_source_daily):
     """
+    Load NLDAS-2 and GRIDMET meteorology for the target image time
 
     Parameters
     ----------
@@ -24,10 +23,6 @@ def nldas_gridmet(time_start, meteorology_source_inst, meteorology_source_daily)
     Accepted collections:
     Inst : NASA/NLDAS/FORA0125_H002
     Daily : IDAHO_EPSCOR/GRIDMET
-
-    References
-    ----------
-
     """
     # Get date information
     time_start = ee.Number(time_start)
@@ -61,7 +56,7 @@ def nldas_gridmet(time_start, meteorology_source_inst, meteorology_source_daily)
     delta_time = time_start.subtract(image_prev_time).divide(image_next_time.subtract(image_prev_time))
 
     # Incoming shortwave down [W m-2]
-    swdown24h = meteorology_daily.select(['srad'], ['rso_24h'])
+    rs_24h = meteorology_daily.select(['srad'], ['rs_24h'])
 
     # Minimum air temperature [K]
     tmin = meteorology_daily.select(['tmmn'], ['tmin'])
@@ -70,12 +65,12 @@ def nldas_gridmet(time_start, meteorology_source_inst, meteorology_source_daily)
     tmax = meteorology_daily.select(['tmmx'], ['tmax'])
 
     # Instantaneous short wave radiation [W m-2]
-    rso_inst = (
+    rs_inst = (
         next_image.select('shortwave_radiation')
         .subtract(previous_image.select('shortwave_radiation'))
         .multiply(delta_time)
         .add(previous_image.select('shortwave_radiation'))
-        .rename('rso_inst')
+        .rename('rs_inst')
     )
 
     # Specific humidity [Kg Kg-1]
@@ -170,18 +165,19 @@ def nldas_gridmet(time_start, meteorology_source_inst, meteorology_source_daily)
     # Resample
     tmin = tmin.subtract(273.15).resample('bilinear')
     tmax = tmax.subtract(273.15).resample('bilinear')
-    rso_inst = rso_inst.resample('bilinear')
     tair = tair.resample('bilinear')
     wind_med = wind_med.resample('bilinear')
     rh = rh.resample('bilinear')
-    swdown24h = swdown24h.resample('bilinear')
+    rs_inst = rs_inst.resample('bilinear')
+    rs_24h = rs_24h.resample('bilinear')
     # wind_clamp = wind_clamp.resample('bilinear')
 
-    return [tmin, tmax, tair, wind_med, rh, rso_inst, swdown24h, tfac]
+    return [tmin, tmax, tair, wind_med, rh, rs_inst, rs_24h, tfac]
 
 
 def era5land(time_start, meteorology_source_inst, meteorology_source_daily):
     """
+    Load ERA5-Land meteorology for the target image time
 
     Parameters
     ----------
@@ -202,10 +198,6 @@ def era5land(time_start, meteorology_source_inst, meteorology_source_daily):
     Inst : ECMWF/ERA5_LAND/HOURLY
     Daily : projects/openet/assets/meteorology/era5land/na/daily
             projects/openet/assets/meteorology/era5land/sa/daily
-
-    References
-    ----------
-
     """
 
     # Get date information
@@ -242,9 +234,9 @@ def era5land(time_start, meteorology_source_inst, meteorology_source_daily):
 
     # Incoming shortwave down [W m-2]
     # The band is called "surface_solar_radiation_downwards_sum" in ECMWF/ERA5_LAND/DAILY_AGGR
-    swdown24h = (
-        meteorology_daily.select(['surface_solar_radiation_downwards'], ['rso_24h'])
-        # meteorology_daily.select(['surface_solar_radiation_downwards_sum'], ['rso_24h'])
+    rs_24h = (
+        meteorology_daily.select(['surface_solar_radiation_downwards'], ['rs_24h'])
+        # meteorology_daily.select(['surface_solar_radiation_downwards_sum'], ['rs_24h'])
         .divide(1 * 60 * 60 * 24)
     )
 
@@ -255,13 +247,13 @@ def era5land(time_start, meteorology_source_inst, meteorology_source_daily):
     tmax = meteorology_daily.select(['temperature_2m_max'], ['tmax'])
 
     # Instantaneous incoming shortwave radiation [W m-2]
-    rso_inst = (
+    rs_inst = (
         ee.ImageCollection(meteorology_source_inst)
         .filterDate(ee.Date(time_start), ee.Date(time_start).advance(1, 'hour'))
         .select('surface_solar_radiation_downwards_hourly')
         .mean()
         .divide(1 * 60 * 60)
-        .rename('rso_inst')
+        .rename('rs_inst')
     )
 
     # Air temperature [C]
@@ -351,11 +343,12 @@ def era5land(time_start, meteorology_source_inst, meteorology_source_daily):
     # Resample
     tmin = tmin.subtract(273.15).resample('bilinear')
     tmax = tmax.subtract(273.15).resample('bilinear')
-    rso_inst = rso_inst.resample('bilinear')
+
     tair = tair.resample('bilinear')
     wind_med = wind_med.resample('bilinear')
     rh = rh.resample('bilinear')
-    swdown24h = swdown24h.resample('bilinear')
+    rs_inst = rs_inst.resample('bilinear')
+    rs_24h = rs_24h.resample('bilinear')
     # wind_clamp = wind_clamp.resample('bilinear')
 
-    return [tmin, tmax, tair, wind_med, rh, rso_inst, swdown24h, tfac]
+    return [tmin, tmax, tair, wind_med, rh, rs_inst, rs_24h, tfac]

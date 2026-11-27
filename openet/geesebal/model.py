@@ -8,8 +8,6 @@ from openet.geesebal import utils
 DEG2RAD = math.pi / 180.0
 
 
-# TODO: The "rso_inst" and "rso_24h" naming is probably not valid given that these
-#   are incoming solar radiation, not the theoretical "clear sky" incoming solar
 # TODO: Consider replacing coords with separate lat and lon parameters following
 #   structure of other models
 # TODO: Rename "rad_inst" and "rad_24h" variables to "rn_inst" and "rn_24r"
@@ -30,8 +28,8 @@ def et(
     tair,
     ux,
     rh,
-    rso_inst,
-    rso_24h,
+    rs_inst,
+    rs_24h,
     tfac,
     elevation,
     ndvi_cold,
@@ -72,9 +70,9 @@ def et(
         Wind speed [m/s].
     rh : ee.Image
         Relative humidity (%).
-    rso_inst : ee.Image
+    rs_inst : ee.Image
         Instantaneous incoming shortwave radiation [W m-2].
-    rso_24h : ee.Image
+    rs_24h : ee.Image
         Daily incoming shortwave radiation [W m-2].
     tfac : ee.Image
         Temperature adjustment offset.
@@ -141,14 +139,14 @@ def et(
 
         # Instantaneous net radiation using reanalysis dataset [W m-2]
         rad_inst = radiation_inst(
-            lst, emissivity, albedo, tair, rh, elevation, rso_inst, sun_elevation, cos_zn
+            lst, emissivity, albedo, tair, rh, elevation, rs_inst, sun_elevation, cos_zn
         )
 
         # Instantaneous soil heat flux [W m-2]
         g_inst = soil_heat_flux(rad_inst, ndvi, albedo, lst, ndwi, flag_g, year)
 
         # Daily ney radiation [W m-2]
-        rad_24h = radiation_24h(time_start, tmax, tmin, elevation, rso_24h)
+        rad_24h = radiation_24h(time_start, tmax, tmin, elevation, rs_24h)
 
         # Cold pixels
         cold_pixels = cold_pixel(
@@ -598,7 +596,7 @@ def soil_heat_flux(rn, ndvi, albedo, lst, ndwi, flag_g, year):
     return g.rename('g_inst')
 
 
-def radiation_24h(time_start, tmax, tmin, elev, rso_24h):
+def radiation_24h(time_start, tmax, tmin, elev, rs_24h):
     """
     Daily Net radiation [W m-2] - FAO56
 
@@ -612,7 +610,7 @@ def radiation_24h(time_start, tmax, tmin, elev, rso_24h):
         Minimum air temperature [Celsius].
     elev : ee.Image
         Digital Elevation information [m].
-    rso_24h : ee.Image
+    rs_24h : ee.Image
         Daily Short wave radiation [W m-2]
 
     Returns
@@ -627,7 +625,7 @@ def radiation_24h(time_start, tmax, tmin, elev, rso_24h):
     """
 
     # Convert to MJ m-2
-    rs = rso_24h.multiply(0.0864).rename('Rs')
+    rs = rs_24h.multiply(0.0864).rename('Rs')
 
     # Solar constant [MJ m-2]
     gsc = 0.0820

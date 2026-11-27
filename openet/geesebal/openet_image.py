@@ -134,6 +134,11 @@ class Image:
         self._lst_cold = lst_cold
         self._lst_hot = lst_hot
 
+        try:
+            self.flag_g = kwargs["flag_g"]
+        except:
+            self.flag_g = 'default'
+
         # Reference ET parameters
         try:
             self.et_reference_source = kwargs["et_reference_source"]
@@ -151,11 +156,6 @@ class Image:
             self.et_reference_resample = kwargs["et_reference_resample"]
         except:
             self.et_reference_resample = None
-
-        if ('flag_g' in kwargs.keys()) and kwargs["flag_g"]:
-            self.flag_g = kwargs["flag_g"]
-        else:
-            self.flag_g = 'default'
 
         # Check reference ET parameters
         if self.et_reference_factor and not utils.is_number(self.et_reference_factor):
@@ -386,7 +386,7 @@ class Image:
         # TODO: Add support for other common sources
         if (self._meteorology_source_inst == "NASA/NLDAS/FORA0125_H002") and \
                 (self._meteorology_source_daily == "IDAHO_EPSCOR/GRIDMET"):
-            tmin, tmax, tair, ux, rh, rso_inst, rso_24h, tfac = meteorology.nldas_gridmet(
+            tmin, tmax, tair, ux, rh, rs_inst, rs_24h, tfac = meteorology.nldas_gridmet(
                 self._time_start, self._meteorology_source_inst, self._meteorology_source_daily,
             )
         elif ((self._meteorology_source_inst == "ECMWF/ERA5_LAND/HOURLY") and
@@ -398,7 +398,7 @@ class Image:
             # ECMWF/ERA5_LAND/DAILY_AGGR
             #   Downwelling solar band name is slightly different in this function
             #   and may not run as is
-            tmin, tmax, tair, ux, rh, rso_inst, rso_24h, tfac = meteorology.era5land(
+            tmin, tmax, tair, ux, rh, rs_inst, rs_24h, tfac = meteorology.era5land(
                 self._time_start, self._meteorology_source_inst, self._meteorology_source_daily,
             )
         else:
@@ -416,8 +416,8 @@ class Image:
             tair=tair,
             ux=ux,
             rh=rh,
-            rso_inst=rso_inst,
-            rso_24h=rso_24h,
+            rs_inst=rs_inst,
+            rs_24h=rs_24h,
             tfac=tfac,
             elevation=self.elevation,
             ndvi_cold=self._ndvi_cold,

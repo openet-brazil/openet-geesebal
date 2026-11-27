@@ -129,18 +129,18 @@ def test_soil_heat_flux(rn, ndvi, albedo, lst, ndwi, flag_g, expected, tol=0.000
 
 
 @pytest.mark.parametrize(
-    'time_start, tmax, tmin, elev, rso_24h, expected',
+    'time_start, tmax, tmin, elev, rs_24h, expected',
     [
         [1500230731090, 38.7924, 22.7145, 3, 352.0320, 205.5336],
     ]
 )
-def test_radiation_24h(time_start, tmax, tmin, elev, rso_24h, expected, tol=0.0001):
+def test_radiation_24h(time_start, tmax, tmin, elev, rs_24h, expected, tol=0.0001):
     output = utils.constant_image_value(model.radiation_24h(
         time_start=ee.Number(time_start),
         tmax=ee.Image.constant(tmax),
         tmin=ee.Image.constant(tmin),
         elev=ee.Image.constant(elev),
-        rso_24h=ee.Image.constant(rso_24h),
+        rs_24h=ee.Image.constant(rs_24h),
     ))
     assert abs(output['rad_24h'] - expected) <= tol
 
