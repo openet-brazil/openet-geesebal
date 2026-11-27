@@ -285,9 +285,9 @@ def test_sensible_heat_flux(lst_dem, savi, ux, elev, n_Ts_cold, hot_pixels, expe
         lst_dem=ee.Image.constant(lst_dem),
         savi=ee.Image.constant(savi),
         ux=ee.Image.constant(ux),
+        elev=ee.Image.constant(elev),
         n_Ts_cold=ee.Number(n_Ts_cold),
         d_hot_pixel=ee.Dictionary(hot_pixels),
-        elev=ee.Image.constant(elev),
     ))
     assert abs(output['H'] - expected) <= tol
 

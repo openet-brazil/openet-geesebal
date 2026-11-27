@@ -10,6 +10,8 @@ DEG2RAD = math.pi / 180.0
 
 # TODO: Consider replacing coords with separate lat and lon parameters following
 #   structure of other models
+# TODO: Move all landuse processing into Image class and pass in the target mask
+# TODO: Change all function calls to be by value instead of by position
 def et(
     ndvi,
     ndwi,
@@ -26,11 +28,11 @@ def et(
     rs_24h,
     tfac,
     elevation,
+    coords,
     sun_elevation,
     time_start,
     geometry_image,
     proj,
-    coords,
     flag_g='default',
     ndvi_cold=5,
     ndvi_hot=10,
@@ -72,6 +74,8 @@ def et(
         Temperature adjustment offset.
     elevation : ee.Image
         Elevation [m].
+    coords : ee.Image
+        Landsat image Latitude and longitude.
     sun_elevation : ee.Number, float
         Sun elevation angle read from Landsat SUN_ELEVATION property [deg].
     time_start : ee.Number, int, str
@@ -80,8 +84,6 @@ def et(
         Image geometry.
     proj : ee.Image
         Landsat image projection.
-    coords : ee.Image
-        Landsat image Latitude and longitude.
     flag_g: str, optional
         Geographic identifier. 
         Options: 'default' to global and 'g_brazil' to Brazil.
@@ -118,15 +120,6 @@ def et(
     # LL: iterative process or endmembers selections may return empty values
     # in this case, return an empty image instead of broken the code
     try:
-        # TODO: Move tair_dem call into lst_correction to better document what
-        #   Tair is used in that function
-        # TODO: Rename this variable to make it more clear this is a daily tmean
-        # Air temperature correction [K]
-        tair_dem = tair_dem_correction(tmin, tmax, elevation)
-
-        # Land surface temperature correction [K]
-        lst_dem = lst_correction(lst, elevation, tair_dem, rh, sun_elevation, time_start, coords)
-
         # Instantaneous net radiation using reanalysis dataset [W m-2]
         rn_inst = radiation_inst(
             lst, emissivity, albedo, tair, rh, elevation, rs_inst, sun_elevation, cos_zn
@@ -138,20 +131,28 @@ def et(
         # Daily ney radiation [W m-2]
         rn_24h = radiation_24h(time_start, tmax, tmin, elevation, rs_24h)
 
+        # TODO: Move tair_dem call into lst_correction to better document what
+        #   Tair is used in that function
+        # TODO: Rename this variable to make it more clear this is a daily tmean
+        # Air temperature correction [K]
+        tair_dem = tair_dem_correction(tmin, tmax, elevation)
+
+        # Land surface temperature correction [K]
+        lst_dem = lst_correction(lst, elevation, tair_dem, rh, sun_elevation, time_start, coords)
+
         # Cold pixels
         cold_pixels = cold_pixel(
-            ndvi, ndwi, lst_dem, ndvi_cold, lst_cold, geometry_image, coords, elevation, proj
+            ndvi, ndwi, lst_dem, elevation, coords, geometry_image, proj, ndvi_cold, lst_cold
         )
 
         n_Ts_cold = ee.Number(cold_pixels.get('temp'))
         
         # Hot pixels
         hot_pixels = hot_pixel(
-            ndvi, ndwi, lst_dem, rn_inst, g_inst, ndvi_hot, lst_hot,
-            geometry_image, coords, tfac, elevation, proj
+            ndvi, ndwi, lst_dem, rn_inst, g_inst, tfac, elevation,
+            coords, geometry_image, proj, ndvi_hot, lst_hot
         )
         
-        # Instantaneous sensible heat flux [W m-2]
         # Instantaneous sensible heat flux [W m-2]
         h_inst = sensible_heat_flux(lst_dem, savi, ux, n_Ts_cold, hot_pixels, elevation)
         
@@ -195,7 +196,7 @@ def tao_sw(elev, tair, rh, cos_z0):
     es = tair.expression('0.6108 * exp((17.27 * tair) / (tair + 237.3))', {'tair': tair})
 
     # Actual vapor pressure [kPa]  (FAO56 Eqn 10)
-    ea = es.multiply(rh).divide(100).rename('ea')
+    ea = es.multiply(rh).divide(100)
 
     # Water in the atmosphere [mm] (Garrison and Adler (1990))
     w = ea.expression('(0.14 * EA * PATM) + 2.1', {'PATM': pres, 'EA': ea})
@@ -273,7 +274,7 @@ def cos_terrain(elev, time_start, coords):
 
 def tair_dem_correction(tmin, tmax, elev):
     """
-    Correct air temperature for mountain areas 
+    Correct daily mean air temperature for mountain areas
 
     Parameters
     ----------
@@ -304,7 +305,7 @@ def tair_dem_correction(tmin, tmax, elev):
     return tair_dem.rename('tair_dem')
 
 
-# TODO: Document that this tair is the corrected Tair from taid_dem_correction()
+# TODO: Document that this tair is the daily mean Tair from from tair_dem_correction()
 def lst_correction(lst, elev, tair, rh, sun_elevation, time_start, coords):
     """
     Correct declivity and aspect effects from Land Surface Temperature.
@@ -338,7 +339,7 @@ def lst_correction(lst, elev, tair, rh, sun_elevation, time_start, coords):
     """
 
     # Solar constant [W m-2]
-    gsc = ee.Image.constant(1367)
+    gsc = 1367
 
     # Day of the year
     doy = ee.Date(time_start).getRelative('day', 'year').add(1)
@@ -352,14 +353,13 @@ def lst_correction(lst, elev, tair, rh, sun_elevation, time_start, coords):
     # Solar zenith angle over a horizontal surface
     solar_zenith = ee.Number(90).subtract(sun_elevation)
 
-    solar_zenith_radians = solar_zenith.multiply(DEG2RAD)
-    cos_theta = solar_zenith_radians.cos()
+    cos_theta = solar_zenith.multiply(DEG2RAD).cos()
 
     # Air density [Kg m-3]
     air_dens = lst.expression('(1000 * Pair) / (1.01 * LST * 287)', {'Pair': pres, 'LST': lst})
 
     # Temperature lapse rate [K m-1]
-    temp_lapse_rate = ee.Number(0.0065)
+    temp_lapse_rate = 0.0065
 
     # Correcting land surface temperature [K] with temperature lapse rate
     temp_corr = lst.add(elev.multiply(temp_lapse_rate))
@@ -406,7 +406,8 @@ def homogeneous_mask(ndvi, proj):
     sd_ndvi = (
         ndvi.reduceNeighborhood(
             reducer=ee.Reducer.stdDev(), 
-            kernel=ee.Kernel.square(radius=3, units='pixels'), skipMasked=False
+            kernel=ee.Kernel.square(radius=3, units='pixels'),
+            skipMasked=False,
         )
         .reproject(proj)
         .updateMask(1)
@@ -416,7 +417,8 @@ def homogeneous_mask(ndvi, proj):
     mean_ndvi = (
         ndvi.reduceNeighborhood(
             reducer=ee.Reducer.mean(),
-            kernel=ee.Kernel.square(radius=3, units='pixels'), skipMasked=False
+            kernel=ee.Kernel.square(radius=3, units='pixels'),
+            skipMasked=False,
         )
         .reproject(proj)
         .updateMask(1)
@@ -491,14 +493,13 @@ def radiation_inst(lst, emissivity, albedo, tair, rh, elev, rs_inst, sun_elevati
 
     # Down long wave radiation [W m-2] 
     rad_long_down = lst.expression(
-        '(0.85 * (- log_taosw) ** 0.09) * 5.67e-8 * (n_Ts_cold ** 4)',
-        {'log_taosw': tao_sw_img.log(), 'n_Ts_cold': tair.add(273.15)},
+        '(0.85 * (- log_taosw) ** 0.09) * 5.67e-8 * (Ta ** 4)',
+        {'log_taosw': tao_sw_img.log(), 'Ta': tair.add(273.15)},
     )
 
     # Solar zenith
     solar_zenith = ee.Number(90).subtract(sun_elevation)
-    solar_zenith_radians = solar_zenith.multiply(DEG2RAD)
-    cos_zeni = solar_zenith_radians.cos()
+    cos_zeni = solar_zenith.multiply(DEG2RAD).cos()
 
     # Obtaining a Short down wave radiation correcting mountainous effect 
     rs_inst_dem = rs_inst.multiply(cos_zn.divide(cos_zeni))
@@ -673,9 +674,9 @@ def radiation_24h(time_start, tmax, tmin, elev, rs_24h):
     return rn.rename('rn_24h')
 
 
-# TODO: Add parameters to control number of samples
 def cold_pixel(
-        ndvi, ndwi, lst_dem, ndvi_cold, lst_cold, geometry_image, coords, elev, proj
+        ndvi, ndwi, lst_dem, elev, coords, geometry_image, proj, ndvi_cold, lst_cold,
+        samples=5000, points=200
 ):
     """
     Simplified CIMEC method to select the cold pixel
@@ -688,18 +689,22 @@ def cold_pixel(
         Normalized difference water index.
     lst_dem : ee.Image
         Land surface temperature [K].
+    elev : ee.Image
+        Digital Elevation information [m].
+    coords : ee.Image
+        Latitude and longitude coordinates of the image.
+    geometry_image : ee.Geometry
+        Landsat image geometry.
+    proj : ee.Dictionary
+        Landsat image projection.
     ndvi_cold : ee.Number, int
         NDVI Percentile value to determinate cold pixel.
     lst_cold : ee.Number, int
         LST Percentile value to determinate cold pixel.
-    geometry_image : ee.Geometry
-        Landsat image geometry.
-    coords : ee.Image
-        Latitude and longitude coordinates of the image.
-    elev : ee.Image
-        Digital Elevation information [m].
-    proj : ee.Dictionary
-        Landsat image projection.
+    samples : int, optional
+        Number of calibration sample points.  The default is 5000.
+    points : int, optional
+        Number of calibration aggregation points.  The default is 200.
 
     Returns
     -------
@@ -734,25 +739,23 @@ def cold_pixel(
     lst_nw = lst_dem.updateMask(ndwi.lte(0)).rename('lst_nw')
 
     # Homogeneous mask for ndvi
-    # TODO: Consider renaming variable to "ndvi_mask" to better match naming of other variables
-    stdev_ndvi = homogeneous_mask(ndvi, proj)
+    ndvi_mask = homogeneous_mask(ndvi, proj)
 
     # Flat areas mask 
     slope_filt = slope_mask(elev, proj)   
     
     # Creating a raster with all the parameters
-    images = pos_ndvi.addBands([ndvi, ndvi_neg, pos_ndvi, lst_neg, lst_nw, coords])
+    images = ndvi.addBands([ndvi_neg, pos_ndvi, lst_neg, lst_nw, coords])
+    # images = pos_ndvi.addBands([ndvi, ndvi_neg, pos_ndvi, lst_neg, lst_nw, coords])
 
     # Estimating ndvi percentile [coldest]
-    # TODO: Switch to geometry_image to match other calls
-    #   unless there is some reason why this calls "ndvi.geometry()" instead
     d_perc_top_NDVI = (
-        images.select('ndvi_neg')
-        .updateMask(stdev_ndvi)
+        ndvi_neg
+        .updateMask(ndvi_mask)
         .updateMask(slope_filt)
         .reduceRegion(
             reducer=ee.Reducer.percentile([ndvi_cold]),
-            geometry=ndvi.geometry(),
+            geometry=geometry_image,
             scale=30,
             maxPixels=1e9,
         )
@@ -768,7 +771,7 @@ def cold_pixel(
     # Filtering lst
     d_perc_low_LST = (
         i_top_NDVI.select('lst_nw')
-        .updateMask(stdev_ndvi)
+        .updateMask(ndvi_mask)
         .updateMask(slope_filt)
         .reduceRegion(
             reducer=ee.Reducer.percentile([lst_cold]),
@@ -806,10 +809,10 @@ def cold_pixel(
         return f.setGeometry(ee.Geometry.Point([f.get('longitude'), f.get('latitude')]))
 
     fc_cold_pix = (
-        c_lst_cold20.stratifiedSample(5000, 'int', geometry_image, 30)
+        c_lst_cold20.stratifiedSample(samples, 'int', geometry_image, 30)
         .map(set_pt_geometry)
         .sort('lst_nw', True)  
-        .limit(200)
+        .limit(points)
     )  
  
     n_Ts_cold = ee.Number(fc_cold_pix.aggregate_mean('lst_nw'))
@@ -829,9 +832,9 @@ def cold_pixel(
     return d_cold_pixel
 
 
-# TODO: Add parameters to control number of samples and points/pixels
 def hot_pixel(
-        ndvi, ndwi, lst_dem, rn, g, ndvi_hot, lst_hot, geometry_image, coords, tfac, elev, proj
+        ndvi, ndwi, lst_dem, rn, g, tfac, elev, coords, geometry_image, proj, ndvi_hot, lst_hot,
+        samples=5000, points=200
 ):
     """
     Simplified CIMEC method to select the hot pixel
@@ -848,20 +851,24 @@ def hot_pixel(
         Instantaneous Net Radiation [W m-2]
     g : ee.Image
         Instantaneous Soil heat flux [W m-2]
-    ndvi_hot : ee.Number, int
-        NDVI Percentile value to determinate hot pixel.
-    lst_hot : ee.Number, int
-        LST Percentile value to determinate hot pixel.
-    geometry_image : ee.Geometry
-        Image geometry.
-    coords : ee.Image
-        Latitude and longitude coordinates of the image.
     tfac : ee.Image
         Temperature adjustment offset [K].
     elev : ee.Image
         Elevation [m].
+    geometry_image : ee.Geometry
+        Image geometry.
+    coords : ee.Image
+        Latitude and longitude coordinates of the image.
     proj : ee.Dictionary
         Landsat image projection.
+    ndvi_hot : ee.Number, int
+        NDVI Percentile value to determinate hot pixel.
+    lst_hot : ee.Number, int
+        LST Percentile value to determinate hot pixel.
+    samples : int, optional
+        Number of calibration sample points.  The default is 5000.
+    points : int, optional
+        Number of calibration aggregation points.  The default is 200.
 
     Returns
     -------
@@ -896,22 +903,19 @@ def hot_pixel(
     lst_nw = lst_dem.updateMask(ndwi.lte(0)).rename('lst_nw')
  
     # Homogeneous mask for ndvi
-    # TODO: Consider renaming variable to "ndvi_mask"
-    #   to better match naming of other variables
-    stdev_ndvi = homogeneous_mask(ndvi, proj)
+    ndvi_mask = homogeneous_mask(ndvi, proj)
 
     # Flat areas mask
     slope_filt = slope_mask(elev, proj) 
 
     # Creating a raster with all the parameters
-    # TODO: Remove duplicate bands in this image and maybe build image from NDVI image
-    images = pos_ndvi.addBands([ndvi, ndvi_neg, rn, g, pos_ndvi, lst_neg, lst_nw, coords])
+    images = ndvi.addBands([pos_ndvi, ndvi_neg, rn, g, lst_neg, lst_nw, coords])
     
     # Estimating ndvi percentile [hottest]
     d_perc_down_ndvi = (
         images.select('post_ndvi')
         .updateMask(slope_filt)
-        .updateMask(stdev_ndvi)
+        .updateMask(ndvi_mask)
         .reduceRegion(
             reducer=ee.Reducer.percentile([ndvi_hot]),
             geometry=geometry_image,
@@ -964,10 +968,10 @@ def hot_pixel(
         return f.setGeometry(ee.Geometry.Point([f.get('longitude'), f.get('latitude')]))
 
     fc_hot_pix = (
-        c_lst_hotpix.stratifiedSample(5000, 'int', geometry_image, 30)
+        c_lst_hotpix.stratifiedSample(samples, 'int', geometry_image, 30)
         .map(set_pt_geometry)
         .sort('lst_nw', False)  
-        .limit(200)
+        .limit(points)
     )
 
     # Aggregate all into lists
@@ -1036,19 +1040,19 @@ def sensible_heat_flux(lst_dem, savi, ux, n_Ts_cold, d_hot_pixel, elev):
     """
 
     # Vegetation height [m]
-    n_veg_height = ee.Number(0.5)
+    n_veg_height = 0.5
 
     # Wind speed height [m]
-    n_zx = ee.Number(2)
+    n_zx = 2
 
     # Blending height [m]
-    n_height = ee.Number(200)
+    n_height = 200
 
     # Air specific heat [J kg-1 K-1]
-    n_Cp = ee.Number(1004)
+    n_Cp = 1004
 
     # Von Karman’s constant
-    n_K = ee.Number(0.41)
+    n_K = 0.41
 
     # Lst cold pixel value
     n_Ts_cold = ee.Number(n_Ts_cold)
@@ -1112,15 +1116,15 @@ def sensible_heat_flux(lst_dem, savi, ux, n_Ts_cold, d_hot_pixel, elev):
     ).rename('u_fr')
     
     # Heights [m] above the zero plane displacement
-    z1 = ee.Number(0.01)
-    z2 = ee.Number(2)
+    z1 = 0.01
+    z2 = 2
 
     i_rah = i_ufric.expression( 
         '(log(z2 / z1)) / (i_ufric * 0.41)', {'z2': z2, 'z1': z1, 'i_ufric': i_ufric}
-    ).rename('rah') 
+    ).rename('rah')
 
-    n_ro_hot = (ee.Number(-0.0046).multiply(n_Ts_hot)).add(ee.Number(2.5538))
-    n_H_hot = ee.Number(n_Rn_hot).subtract(ee.Number(n_G_hot))
+    n_ro_hot = n_Ts_hot.multiply(-0.0046).add(2.5538)
+    n_H_hot = n_Rn_hot.subtract(n_G_hot)
     
     # Initial value for iterative loop
     i_H_int = None
@@ -1142,10 +1146,11 @@ def sensible_heat_flux(lst_dem, savi, ux, n_Ts_cold, d_hot_pixel, elev):
         n_coef_a = (n_dT_cold.subtract(n_dT_hot)).divide(n_Ts_cold.subtract(n_Ts_hot))
         n_coef_b = n_dT_hot.subtract(n_coef_a.multiply(n_Ts_hot))
 
-        i_dT_int = ee.Image(0).expression(
-            '(n_coef_a * i_lst_med) + n_coef_b',
-            {'n_coef_a': n_coef_a, 'n_coef_b': n_coef_b, 'i_lst_med': lst_dem}
-        ).rename('dT')
+        i_dT_int = lst_dem.multiply(n_coef_a).add(n_coef_b).rename('dT')
+        # i_dT_int = ee.Image(0).expression(
+        #     '(n_coef_a * i_lst_med) + n_coef_b',
+        #     {'n_coef_a': n_coef_a, 'n_coef_b': n_coef_b, 'i_lst_med': lst_dem}
+        # ).rename('dT')
     
         i_Ta = lst_dem.subtract(i_dT_int)
         i_ro = i_Ta.expression('(-0.0046 * i_Ta) + 2.5538', {'i_Ta': i_Ta}).rename('ro')
@@ -1170,13 +1175,11 @@ def sensible_heat_flux(lst_dem, savi, ux, n_Ts_cold, d_hot_pixel, elev):
                 'i_H_int': i_H_int 
             }
         ).rename('L')
-          
-        img_zero = ee.Image(0)
         
         # Stability Corrections
-        i_psim_200 = img_zero.expression('-5 * (2 / i_L_int)', {'i_L_int': i_L_int})
-        i_psih_2 = img_zero.expression('-5 * (2 / i_L_int)', {'i_L_int': i_L_int})
-        i_psih_01 = img_zero.expression('-5 * (0.1 / i_L_int)', {'i_L_int': i_L_int})
+        i_psim_200 = i_L_int.expression('-5 * (2 / i_L_int)', {'i_L_int': i_L_int})
+        i_psih_2 = i_L_int.expression('-5 * (2 / i_L_int)', {'i_L_int': i_L_int})
+        i_psih_01 = i_L_int.expression('-5 * (0.1 / i_L_int)', {'i_L_int': i_L_int})
       
         i_x200 = i_L_int.expression('(1 - (16 * (200 / i_L_int))) ** 0.25', {'i_L_int': i_L_int})
         i_x2 = i_L_int.expression('(1 - (16 * (2 / i_L_int))) ** 0.25', {'i_L_int': i_L_int})

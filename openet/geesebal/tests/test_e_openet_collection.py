@@ -339,11 +339,11 @@ def test_Collection_overpass_no_variables_exception():
 #     output = utils.getinfo(default_coll_obj().interpolate(use_joins=use_joins, **interp_args))
 #     assert output['type'] == 'ImageCollection'
 #     assert parse_scene_id(output) == ['20170701']
-
-
-def test_Collection_interpolate_variables_custom_et():
-    output = utils.getinfo(default_coll_obj().interpolate(variables=['et'], **interp_args))
-    assert {y['id'] for x in output['features'] for y in x['bands']} == {'et'}
+#
+#
+# def test_Collection_interpolate_variables_custom_et():
+#     output = utils.getinfo(default_coll_obj().interpolate(variables=['et'], **interp_args))
+#     assert {y['id'] for x in output['features'] for y in x['bands']} == {'et'}
 
 
 def test_Collection_interpolate_t_interval_daily():

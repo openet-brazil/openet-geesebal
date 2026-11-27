@@ -159,9 +159,6 @@ def nldas_gridmet(time_start, meteorology_source_inst, meteorology_source_daily)
     tfac = etr_accum.expression('2.6 - 13 * ratio', {'ratio': ratio})
     tfac = ee.Image(tfac.where(ratio.gt(0.2), 0)).rename('tfac')
 
-    # Wind velocity correction (limit to 1.5)
-    # wind_clamp = wind_med.max(1.5).rename('ux_clamp')
-
     # Resample
     tmin = tmin.subtract(273.15).resample('bilinear')
     tmax = tmax.subtract(273.15).resample('bilinear')
@@ -170,7 +167,6 @@ def nldas_gridmet(time_start, meteorology_source_inst, meteorology_source_daily)
     rh = rh.resample('bilinear')
     rs_inst = rs_inst.resample('bilinear')
     rs_24h = rs_24h.resample('bilinear')
-    # wind_clamp = wind_clamp.resample('bilinear')
 
     return [tmin, tmax, tair, wind_med, rh, rs_inst, rs_24h, tfac]
 
@@ -337,9 +333,6 @@ def era5land(time_start, meteorology_source_inst, meteorology_source_daily):
     tfac = etr_accum.expression('2.6 - 13 * ratio', {'ratio': ratio})
     tfac = ee.Image(tfac.where(ratio.gt(0.2), 0)).rename('tfac')
 
-    # Wind velocity correction (limit to 1.5)
-    # wind_clamp = wind_med.max(1.5).rename('ux_clamp')
-
     # Resample
     tmin = tmin.subtract(273.15).resample('bilinear')
     tmax = tmax.subtract(273.15).resample('bilinear')
@@ -349,6 +342,5 @@ def era5land(time_start, meteorology_source_inst, meteorology_source_daily):
     rh = rh.resample('bilinear')
     rs_inst = rs_inst.resample('bilinear')
     rs_24h = rs_24h.resample('bilinear')
-    # wind_clamp = wind_clamp.resample('bilinear')
 
     return [tmin, tmax, tair, wind_med, rh, rs_inst, rs_24h, tfac]
